@@ -6,6 +6,7 @@
 
 import json
 import os
+import threading
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 from pathlib import Path
@@ -176,6 +177,14 @@ class ClientConfig:
     # 会话 ID
     session_id: Optional[str] = None
     
+    # 线程锁
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    
+    def __post_init__(self):
+        # 确保反序列化后锁存在
+        if not hasattr(self, '_lock'):
+            object.__setattr__(self, '_lock', threading.Lock())
+
     @classmethod
     def get_config_dir(cls) -> Path:
         """获取配置文件目录"""
@@ -280,44 +289,49 @@ class ClientConfig:
     
     def save(self, config_path: Optional[str] = None) -> bool:
         """保存配置到文件"""
-        if config_path:
-            path = Path(config_path)
-        else:
-            # 确保配置目录存在
-            self.get_config_dir()  # 这会创建目录
-            path = self.get_config_path()
-        
-        try:
-            # 确保父目录存在
-            path.parent.mkdir(parents=True, exist_ok=True)
+        # 确保锁存在 (处理从 dict 加载的情况)
+        if not hasattr(self, '_lock'):
+            object.__setattr__(self, '_lock', threading.Lock())
             
-            data = {
-                'server': asdict(self.server),
-                'appearance': asdict(self.appearance),
-                'chat_window': asdict(self.chat_window),
-                'voice': asdict(self.voice),
-                'hotkeys': asdict(self.hotkeys),
-                'interaction': asdict(self.interaction),
-                'proactive': asdict(self.proactive),
-                'storage': asdict(self.storage),
-                'session_id': self.session_id,
-            }
+        with self._lock:
+            if config_path:
+                path = Path(config_path)
+            else:
+                # 确保配置目录存在
+                self.get_config_dir()  # 这会创建目录
+                path = self.get_config_path()
             
-            # 不保存密码和 token 的明文（可选：加密存储）
-            # 这里简单处理，不保存敏感信息
-            # data['server']['password'] = ""  # 可选：不保存密码
-            
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            
-            print(f"[DEBUG] 配置已成功保存到: {path}")
-            return True
-            
-        except Exception as e:
-            import traceback
-            print(f"保存配置失败: {e}")
-            traceback.print_exc()
-            return False
+            try:
+                # 确保父目录存在
+                path.parent.mkdir(parents=True, exist_ok=True)
+                
+                data = {
+                    'server': asdict(self.server),
+                    'appearance': asdict(self.appearance),
+                    'chat_window': asdict(self.chat_window),
+                    'voice': asdict(self.voice),
+                    'hotkeys': asdict(self.hotkeys),
+                    'interaction': asdict(self.interaction),
+                    'proactive': asdict(self.proactive),
+                    'storage': asdict(self.storage),
+                    'session_id': self.session_id,
+                }
+                
+                # 不保存密码和 token 的明文（可选：加密存储）
+                # 这里简单处理，不保存敏感信息
+                # data['server']['password'] = ""  # 可选：不保存密码
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                
+                print(f"[DEBUG] 配置已成功保存到: {path}")
+                return True
+                
+            except Exception as e:
+                import traceback
+                print(f"保存配置失败: {e}")
+                traceback.print_exc()
+                return False
     
     def to_legacy_dict(self) -> dict:
         """转换为旧版（插件模式）配置格式，用于兼容现有 GUI 组件"""

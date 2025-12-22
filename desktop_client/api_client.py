@@ -20,6 +20,7 @@ from typing import Optional, Callable, AsyncGenerator, Any
 from pathlib import Path
 
 import httpx
+import websockets
 
 # 忽略 httpcore 的异步生成器清理警告（这是 httpcore 的已知问题）
 warnings.filterwarnings("ignore", message="async generator ignored GeneratorExit")
@@ -46,6 +47,135 @@ class SSEEvent:
     raw: Optional[dict] = None
 
 
+class WebSocketClient:
+    """WebSocket 客户端，用于实时双向通信"""
+    
+    def __init__(
+        self,
+        server_url: str,
+        token: str,
+        session_id: str,
+        on_message: Optional[Callable[[dict], None]] = None
+    ):
+        # 转换 http/https 为 ws/wss
+        ws_url = server_url.replace("http://", "ws://").replace("https://", "wss://")
+        self.url = f"{ws_url}/ws/client?token={token}&session_id={session_id}"
+        
+        self.on_message = on_message
+        self.ws = None
+        
+        self._running = False
+        self._reconnect_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
+        
+    async def start(self):
+        """启动 WebSocket 客户端"""
+        if self._running:
+            return
+            
+        self._running = True
+        self._reconnect_task = asyncio.create_task(self._connect_loop())
+        
+    async def stop(self):
+        """停止 WebSocket 客户端"""
+        self._running = False
+        
+        if self.ws:
+            await self.ws.close()
+            
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+                
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            
+    async def _connect_loop(self):
+        """连接维护循环（自动重连）"""
+        while self._running:
+            try:
+                print(f"正在连接 WebSocket: {self.url}")
+                async with websockets.connect(self.url) as ws:
+                    self.ws = ws
+                    print("WebSocket 已连接")
+                    
+                    # 启动心跳
+                    self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+                    
+                    # 消息接收循环
+                    async for message in ws:
+                        if not self._running:
+                            break
+                            
+                        try:
+                            data = json.loads(message)
+                            
+                            # 处理心跳响应
+                            if data.get("type") == "heartbeat_ack":
+                                continue
+                                
+                            if self.on_message:
+                                # 在主线程/事件循环中调用回调
+                                if asyncio.iscoroutinefunction(self.on_message):
+                                    await self.on_message(data)
+                                else:
+                                    self.on_message(data)
+                        except json.JSONDecodeError:
+                            print(f"收到无效 JSON 消息: {message}")
+                        except Exception as e:
+                            print(f"处理消息出错: {e}")
+                            
+            except (websockets.ConnectionClosed, ConnectionRefusedError) as e:
+                print(f"WebSocket 连接断开/失败: {e}")
+            except Exception as e:
+                print(f"WebSocket 异常: {e}")
+            finally:
+                self.ws = None
+                if self._heartbeat_task:
+                    self._heartbeat_task.cancel()
+                
+            # 重连等待
+            if self._running:
+                await asyncio.sleep(5)
+                
+    async def _heartbeat_loop(self):
+        """心跳循环"""
+        while self._running and self.ws:
+            try:
+                await self.ws.send(json.dumps({"type": "heartbeat"}))
+                await asyncio.sleep(30)
+            except Exception:
+                break
+
+    async def send(self, data: dict):
+        """发送消息"""
+        if self.ws:
+            await self.ws.send(json.dumps(data))
+        else:
+            print("WebSocket 未连接，无法发送消息")
+            
+    async def send_desktop_state(self, state_data: dict):
+        """
+        发送桌面状态上报
+        
+        Args:
+            state_data: 桌面状态数据（DesktopState.to_dict() 的结果）
+        """
+        message = {
+            "type": "desktop_state",
+            "data": state_data,
+        }
+        await self.send(message)
+        
+    @property
+    def is_connected(self) -> bool:
+        """检查 WebSocket 是否已连接"""
+        return self.ws is not None and self._running
+
+
 class AstrBotApiClient:
     """AstrBot HTTP API 客户端"""
     
@@ -67,6 +197,8 @@ class AstrBotApiClient:
         
         self._state = ConnectionState.DISCONNECTED
         self._client: Optional[httpx.AsyncClient] = None
+        self._sse_client: Optional[httpx.AsyncClient] = None
+        self.ws_client: Optional[WebSocketClient] = None
         
     @property
     def state(self) -> ConnectionState:
@@ -98,34 +230,46 @@ class AstrBotApiClient:
         return headers
     
     async def _ensure_client(self) -> httpx.AsyncClient:
-        """确保 HTTP 客户端已创建"""
+        """确保 HTTP 客户端已创建（单例复用）"""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout, connect=10),
+                timeout=httpx.Timeout(self.timeout, connect=10.0),
                 follow_redirects=True,
+                http2=True,  # 尝试启用 HTTP/2 以提升普通 API 请求性能
             )
         return self._client
     
-    async def _get_sse_client(self) -> httpx.AsyncClient:
-        """获取用于 SSE 请求的客户端（更长超时）"""
-        # SSE 流式请求需要更长的读取超时，因为 AI 可能需要较长时间思考
-        # 禁用 HTTP/2 以避免流控制导致的延迟问题
-        return httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=10.0,
-                read=300.0,  # 5 分钟读取超时
-                write=30.0,
-                pool=10.0,
-            ),
-            follow_redirects=True,
-            http2=False,  # 禁用 HTTP/2，避免流控制问题导致消息延迟
-        )
+    async def _ensure_sse_client(self) -> httpx.AsyncClient:
+        """确保 SSE 客户端已创建（单例复用，更长超时）"""
+        if self._sse_client is None or self._sse_client.is_closed:
+            # SSE 流式请求需要更长的读取超时
+            self._sse_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=10.0,
+                    read=300.0,  # 5 分钟读取超时
+                    write=30.0,
+                    pool=10.0,
+                ),
+                follow_redirects=True,
+                http2=False,  # SSE 保持禁用 HTTP/2，避免流控制问题
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            )
+        return self._sse_client
     
     async def close(self):
-        """关闭客户端"""
+        """关闭所有客户端连接"""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
+            
+        if self._sse_client and not self._sse_client.is_closed:
+            await self._sse_client.aclose()
+            self._sse_client = None
+        
+        if self.ws_client:
+            await self.ws_client.stop()
+            self.ws_client = None
+            
         self.state = ConnectionState.DISCONNECTED
     
     # ========== 认证相关 ==========
@@ -219,7 +363,24 @@ class AstrBotApiClient:
         except Exception:
             self.state = ConnectionState.DISCONNECTED
             return False
-    
+
+    async def start_websocket(self, session_id: str, on_message: Optional[Callable[[dict], None]] = None):
+        """启动 WebSocket 连接"""
+        if not self.token:
+            print("启动 WebSocket 失败: 未登录")
+            return
+            
+        if self.ws_client:
+            await self.ws_client.stop()
+            
+        self.ws_client = WebSocketClient(
+            server_url=self.server_url,
+            token=self.token,
+            session_id=session_id,
+            on_message=on_message
+        )
+        await self.ws_client.start()
+
     # ========== 会话管理 ==========
     
     async def create_session(self, platform_id: str = "webchat") -> tuple[bool, Optional[str]]:
@@ -485,36 +646,31 @@ class AstrBotApiClient:
         if selected_model:
             body["selected_model"] = selected_model
         
-        # 强制使用新的客户端实例，不复用连接，避免 qasync 环境下的缓冲/唤醒问题
-        # 这是为了解决 GUI 界面中消息延迟显示（需要下一次请求触发）的顽固 Bug
+        # 使用复用的 SSE 客户端
+        client = await self._ensure_sse_client()
         
-        # 创建全新的一次性客户端
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
-            follow_redirects=True,
-            http2=False, # 禁用 HTTP2
-        ) as client:
-            try:
-                headers = self._get_headers()
-                headers["Accept-Encoding"] = "identity"
-                headers["Cache-Control"] = "no-cache"
-                headers["Connection"] = "close" # 明确告知服务器关闭连接
+        try:
+            headers = self._get_headers()
+            # SSE 特定头
+            headers["Accept"] = "text/event-stream"
+            headers["Cache-Control"] = "no-cache"
+            # 移除 Connection: close 以允许 Keep-Alive
+            
+            async with client.stream(
+                "POST",
+                f"{self.api_base}/chat/send",
+                json=body,
+                headers=headers,
+            ) as response:
+                if response.status_code != 200:
+                    yield SSEEvent(
+                        event_type="error",
+                        data=f"HTTP {response.status_code}",
+                    )
+                    return
                 
-                async with client.stream(
-                    "POST",
-                    f"{self.api_base}/chat/send",
-                    json=body,
-                    headers=headers,
-                ) as response:
-                    if response.status_code != 200:
-                        yield SSEEvent(
-                            event_type="error",
-                            data=f"HTTP {response.status_code}",
-                        )
-                        return
-                    
-                    # 手动处理 SSE 流
-                    async for line in response.aiter_lines():
+                # 手动处理 SSE 流
+                async for line in response.aiter_lines():
                         if not line:
                             continue
                             
@@ -547,14 +703,14 @@ class AstrBotApiClient:
                             except json.JSONDecodeError:
                                 continue
                         
-            except httpx.ConnectError as e:
-                yield SSEEvent(event_type="error", data=f"连接失败: {e}")
-            except httpx.TimeoutException as e:
-                yield SSEEvent(event_type="error", data=f"请求超时（服务器响应时间过长）: {e}")
-            except GeneratorExit:
-                pass
-            except Exception as e:
-                yield SSEEvent(event_type="error", data=f"发送消息异常: {e}")
+        except httpx.ConnectError as e:
+            yield SSEEvent(event_type="error", data=f"连接失败: {e}")
+        except httpx.TimeoutException as e:
+            yield SSEEvent(event_type="error", data=f"请求超时（服务器响应时间过长）: {e}")
+        except GeneratorExit:
+            pass
+        except Exception as e:
+            yield SSEEvent(event_type="error", data=f"发送消息异常: {e}")
     
     async def send_text_message(
         self,

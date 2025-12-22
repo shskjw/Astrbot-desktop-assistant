@@ -40,8 +40,8 @@ from .bridge import (
 # 延迟导入应用类（避免循环导入）
 def get_app_class():
     """获取应用主类"""
-    from .app import DesktopAssistantClient, AsyncRunner
-    return DesktopAssistantClient, AsyncRunner
+    from .app import DesktopClientApp
+    return DesktopClientApp
 
 __all__ = [
     # 版本信息

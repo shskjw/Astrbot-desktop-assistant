@@ -7,6 +7,7 @@
 - Qt 信号机制实现跨窗口同步
 """
 
+import asyncio
 import json
 import os
 import uuid
@@ -197,9 +198,9 @@ class ChatHistoryManager(QObject):
         if len(self._messages) > self._max_messages:
             self._messages = self._messages[-self._max_messages:]
         
-        # 自动保存
+        # 自动保存 (异步)
         if self._auto_save:
-            self.save_to_file()
+            self._schedule_save()
         
         # 发射信号
         self.message_added.emit(message)
@@ -269,14 +270,65 @@ class ChatHistoryManager(QObject):
         self._dirty = True
         
         if self._auto_save:
-            self.save_to_file()
+            self._schedule_save()
         
         # 发射信号
         self.messages_cleared.emit()
     
-    def save_to_file(self, path: str = "") -> bool:
+    def _schedule_save(self):
+        """调度异步保存任务"""
+        try:
+            # 获取当前事件循环
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(self.save_to_file_async())
+            else:
+                # 如果没有运行中的循环，回退到同步保存
+                self.save_to_file_sync()
+        except RuntimeError:
+            # 如果没有事件循环，回退到同步保存
+            self.save_to_file_sync()
+
+    async def save_to_file_async(self, path: str = "") -> bool:
         """
-        保存聊天记录到文件
+        异步保存聊天记录到文件
+        
+        Args:
+            path: 保存路径，为空则使用默认路径
+            
+        Returns:
+            是否保存成功
+        """
+        save_path = path or self._history_path
+        
+        try:
+            # 1. 在主线程中准备数据（避免多线程竞争）
+            # 深拷贝或转换为 dict，确保传递给线程的数据是独立的
+            data_to_save = {
+                'version': 1,
+                'messages': [msg.to_dict() for msg in self._messages]
+            }
+            
+            # 2. 在线程池中执行文件写入操作
+            def _write_file():
+                # 确保目录存在
+                Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+            
+            await asyncio.to_thread(_write_file)
+            
+            self._dirty = False
+            # print(f"[ChatHistory] 聊天记录已异步保存到: {save_path}")
+            return True
+            
+        except Exception as e:
+            print(f"[ChatHistory] 异步保存聊天记录失败: {e}")
+            return False
+
+    def save_to_file_sync(self, path: str = "") -> bool:
+        """
+        同步保存聊天记录到文件（保留用于向后兼容或无事件循环的情况）
         
         Args:
             path: 保存路径，为空则使用默认路径
@@ -305,6 +357,23 @@ class ChatHistoryManager(QObject):
         except Exception as e:
             print(f"[ChatHistory] 保存聊天记录失败: {e}")
             return False
+            
+    def save_to_file(self, path: str = "") -> bool:
+        """
+        保存聊天记录到文件 (兼容旧接口，优先使用异步)
+        
+        Args:
+            path: 保存路径
+            
+        Returns:
+            True (注意：异步保存时无法立即知道结果，这里总是返回 True 或调度结果)
+        """
+        if path:
+             # 如果指定了路径，通常是导出操作，使用同步保存以确保完成
+            return self.save_to_file_sync(path)
+        
+        self._schedule_save()
+        return True
     
     def load_from_file(self, path: str = "") -> bool:
         """

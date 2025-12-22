@@ -33,6 +33,10 @@ class MarkdownLabel(QTextBrowser):
         
         self._role = role
         self._original_text = ""  # 保存原始 Markdown 文本用于主题更新
+        
+        # 应用主题样式（设置默认文字颜色）
+        self._apply_theme_style()
+        
         self.set_markdown(text)
         
     def set_markdown(self, text: str):
@@ -47,6 +51,9 @@ class MarkdownLabel(QTextBrowser):
         
     def update_theme(self):
         """更新主题 - 重新渲染内容以应用新主题颜色"""
+        # 先更新组件的默认文字颜色样式
+        self._apply_theme_style()
+        
         if self._original_text:
             html = MarkdownUtils.render(self._original_text, self._role)
             self.setHtml(html)
@@ -54,6 +61,31 @@ class MarkdownLabel(QTextBrowser):
             self.document().adjustSize()
             h = self.document().size().height()
             self.setFixedHeight(int(h) + 10)
+    
+    def _apply_theme_style(self):
+        """应用主题样式，设置默认文字颜色
+        
+        这是修复深色主题下文字颜色问题的关键：
+        通过 Qt 样式表显式设置 QTextBrowser 的默认文字颜色，
+        确保即使 HTML 渲染有问题，文字颜色也能正确显示。
+        """
+        theme = theme_manager.current_theme
+        c = theme.colors
+        
+        # 根据角色确定文字颜色
+        if self._role == "user":
+            text_color = c.bubble_user_text
+        else:
+            text_color = c.bubble_ai_text
+        
+        # 设置样式表，确保默认文字颜色与主题一致
+        self.setStyleSheet(f"""
+            QTextBrowser {{
+                color: {text_color};
+                background: transparent;
+                border: none;
+            }}
+        """)
     
     def loadResource(self, resource_type, name):
         """重写资源加载，缓存图片用于预览"""
