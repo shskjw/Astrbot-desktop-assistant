@@ -388,31 +388,81 @@ class ChatHistoryManager(QObject):
         load_path = path or self._history_path
         
         if not os.path.exists(load_path):
-            print(f"[ChatHistory] 聊天记录文件不存在: {load_path}")
-            return False
+            print(f"[ChatHistory] 聊天记录文件不存在: {load_path}，将使用空历史记录")
+            self._messages = []
+            self._dirty = False
+            # 即使文件不存在，也发射信号通知UI可以开始显示（空列表）
+            self.history_loaded.emit()
+            return True  # 不视为错误，只是没有历史记录
         
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                content = f.read()
+            
+            # 检查文件是否为空
+            if not content.strip():
+                print(f"[ChatHistory] 聊天记录文件为空: {load_path}")
+                self._messages = []
+                self._dirty = False
+                self.history_loaded.emit()
+                return True
+            
+            data = json.loads(content)
             
             # 版本检查
             version = data.get('version', 1)
+            if version != 1:
+                print(f"[ChatHistory] 警告: 聊天记录版本 {version} 可能不兼容")
             
             # 加载消息
             messages_data = data.get('messages', [])
-            self._messages = [ChatMessage.from_dict(m) for m in messages_data]
+            loaded_messages = []
             
+            for i, m in enumerate(messages_data):
+                try:
+                    msg = ChatMessage.from_dict(m)
+                    loaded_messages.append(msg)
+                except Exception as e:
+                    print(f"[ChatHistory] 跳过无效消息 {i}: {e}")
+                    continue
+            
+            self._messages = loaded_messages
             self._dirty = False
-            print(f"[ChatHistory] 已加载 {len(self._messages)} 条聊天记录")
+            print(f"[ChatHistory] 成功加载 {len(self._messages)} 条聊天记录 (来自 {load_path})")
             
             # 发射信号
             self.history_loaded.emit()
             
             return True
             
+        except json.JSONDecodeError as e:
+            print(f"[ChatHistory] 聊天记录文件格式错误: {e}")
+            # 文件损坏，备份后重置
+            self._backup_corrupted_file(load_path)
+            self._messages = []
+            self._dirty = False
+            self.history_loaded.emit()
+            return False
+            
         except Exception as e:
             print(f"[ChatHistory] 加载聊天记录失败: {e}")
+            import traceback
+            traceback.print_exc()
+            # 出错时也发射信号，让UI可以正常初始化
+            self._messages = []
+            self._dirty = False
+            self.history_loaded.emit()
             return False
+    
+    def _backup_corrupted_file(self, path: str):
+        """备份损坏的聊天记录文件"""
+        try:
+            if os.path.exists(path):
+                backup_path = path + f".corrupted.{int(time.time())}"
+                os.rename(path, backup_path)
+                print(f"[ChatHistory] 已备份损坏的文件到: {backup_path}")
+        except Exception as e:
+            print(f"[ChatHistory] 备份损坏文件失败: {e}")
     
     def set_auto_save(self, enabled: bool):
         """设置自动保存开关"""

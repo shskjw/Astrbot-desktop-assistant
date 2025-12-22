@@ -74,6 +74,13 @@ class CompactChatWindow(QWidget):
         self._message_history = [] # [(msg_type, content, is_user), ...]
         self._attachment_path = None
         self._is_waiting = False
+        
+        # 自动隐藏定时器
+        self._auto_hide_timer = QTimer(self)
+        self._auto_hide_timer.setSingleShot(True)
+        self._auto_hide_timer.timeout.connect(self._on_auto_hide_timeout)
+        self._auto_hide_enabled = False
+        self._auto_hide_duration = 5000  # 默认5秒
         self._current_ai_message = ""
         self._current_ai_label = None # 当前 AI 回复的 MarkdownLabel
         self._current_ai_message_id: str = ""  # 当前流式响应的消息ID
@@ -83,6 +90,10 @@ class CompactChatWindow(QWidget):
         
         # 消息ID与MarkdownLabel的映射，用于更新消息
         self._message_labels: dict = {}  # {message_id: MarkdownLabel}
+        
+        # 历史记录加载状态标志
+        self._history_loaded = False
+        self._history_loading = False
         
         # 聊天记录管理器
         self._chat_history = get_chat_history_manager()
@@ -216,11 +227,9 @@ class CompactChatWindow(QWidget):
         self._chat_history.messages_cleared.connect(self._on_history_cleared)
         self._chat_history.history_loaded.connect(self._on_history_loaded)
         
-        # 延迟加载历史记录，确保头像已设置
-        # 注意：实际头像设置在 FloatingBallWindow 构造后调用
-        # 使用 QTimer 延迟加载，给外部设置头像的机会
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(100, self._load_history)
+        # 历史记录将由 FloatingBallWindow 在头像设置完成后统一加载
+        # 移除这里的延迟加载，避免与 FloatingBallWindow 中的 reload_history_display 产生竞态条件
+        # 见 FloatingBallWindow.__init__ 中的 QTimer.singleShot(150, self._compact_window.reload_history_display)
         
     def _on_theme_changed(self, theme: Theme):
         self._apply_theme()
@@ -393,32 +402,69 @@ class CompactChatWindow(QWidget):
             self._bot_avatar_pixmap = None
     
     def reload_history_display(self):
-        """重新加载历史记录显示（在头像设置后调用）"""
-        # 清空当前显示
-        while self._history_layout.count() > 1:
-            item = self._history_layout.itemAt(0)
-            if item and item.widget():
-                w = item.widget()
-                if w is not None:
-                    self._history_layout.removeWidget(w)
-                    w.deleteLater()
+        """重新加载历史记录显示（在头像设置后调用）
         
-        self._displayed_message_ids.clear()
-        self._message_labels.clear()
+        此方法会清空当前显示并重新加载所有历史记录。
+        使用 _history_loading 标志防止并发加载。
+        """
+        # 防止并发加载
+        if self._history_loading:
+            print("[CompactChatWindow] 历史记录正在加载中，跳过重复加载")
+            return
         
-        # 重新加载显示
-        messages = self._chat_history.get_messages()
-        for msg in messages:
-            self._display_message_from_history(msg)
+        self._history_loading = True
         
-        self._scroll_to_bottom()
+        try:
+            # 清空当前显示
+            while self._history_layout.count() > 1:
+                item = self._history_layout.itemAt(0)
+                if item and item.widget():
+                    w = item.widget()
+                    if w is not None:
+                        self._history_layout.removeWidget(w)
+                        w.deleteLater()
+            
+            self._displayed_message_ids.clear()
+            self._message_labels.clear()
+            
+            # 重新加载显示
+            messages = self._chat_history.get_messages()
+            print(f"[CompactChatWindow] 加载 {len(messages)} 条历史记录")
+            
+            for msg in messages:
+                self._display_message_from_history(msg)
+            
+            self._history_loaded = True
+            self._scroll_to_bottom()
+            
+        finally:
+            self._history_loading = False
     
     def _load_history(self):
-        """加载聊天历史记录"""
-        # 显示已有的消息
-        messages = self._chat_history.get_messages()
-        for msg in messages:
-            self._display_message_from_history(msg)
+        """加载聊天历史记录
+        
+        此方法只在历史未加载时执行，防止重复加载。
+        """
+        # 如果已经加载过或正在加载，跳过
+        if self._history_loaded or self._history_loading:
+            print("[CompactChatWindow] 历史记录已加载或正在加载，跳过")
+            return
+        
+        self._history_loading = True
+        
+        try:
+            # 显示已有的消息
+            messages = self._chat_history.get_messages()
+            print(f"[CompactChatWindow] _load_history: 加载 {len(messages)} 条消息")
+            
+            for msg in messages:
+                self._display_message_from_history(msg)
+            
+            self._history_loaded = True
+            self._scroll_to_bottom()
+            
+        finally:
+            self._history_loading = False
     
     def _display_message_from_history(self, msg: ChatMessage):
         """从历史记录中显示消息（不会再次添加到历史记录）"""
@@ -797,25 +843,17 @@ class CompactChatWindow(QWidget):
         self._update_geometry()
     
     def _on_history_loaded(self):
-        """处理历史记录加载完成信号"""
-        # 清空当前显示
-        while self._history_layout.count() > 1:
-            item = self._history_layout.itemAt(0)
-            if item and item.widget():
-                w = item.widget()
-                if w is not None:
-                    self._history_layout.removeWidget(w)
-                    w.deleteLater()
+        """处理历史记录加载完成信号
         
-        self._displayed_message_ids.clear()
-        self._message_labels.clear()
+        当 ChatHistoryManager 完成文件加载时调用此方法。
+        """
+        print("[CompactChatWindow] 收到 history_loaded 信号，重新加载显示")
         
-        # 重新加载显示
-        messages = self._chat_history.get_messages()
-        for msg in messages:
-            self._display_message_from_history(msg)
+        # 重置加载状态以允许重新加载
+        self._history_loaded = False
         
-        self._scroll_to_bottom()
+        # 调用 reload_history_display 来重新加载
+        self.reload_history_display()
 
     def _on_close(self):
         self.hide()
@@ -871,22 +909,19 @@ class CompactChatWindow(QWidget):
             self.message_sent.emit(text)
             
         self._input.clear()
-        self._start_waiting()
+        # 不再调用 _start_waiting()，允许连续发送消息
         
     def _start_waiting(self):
-        """开始等待响应状态，但不创建占位消息
+        """开始等待响应状态
         
-        占位消息会导致消息重复问题，所以改为：
-        - 仅设置等待状态标志
-        - 禁用输入控件
-        - 不创建占位消息，等待实际响应到来
+        注意：不再禁用输入控件，允许用户在等待响应时继续发送消息
         """
         self._is_waiting = True
-        self._send_btn.setEnabled(False)
-        self._input.setEnabled(False)
+        # 移除禁用控件的代码，允许并发发送消息
+        # self._send_btn.setEnabled(False)
+        # self._input.setEnabled(False)
         
-        # 不再创建占位消息，避免消息重复
-        # 当调用 update_streaming_response 或 add_ai_message 时再创建消息
+        # 不创建占位消息
         self._current_ai_message_id = ""
         self._current_ai_message = ""
         self._current_ai_label = None
@@ -1227,9 +1262,10 @@ class CompactChatWindow(QWidget):
     def finish_response(self):
         """响应结束"""
         self._is_waiting = False
-        self._send_btn.setEnabled(True)
-        self._input.setEnabled(True)
-        self._input.setFocus()
+        # 移除重新启用控件的代码，因为控件始终保持可用状态
+        # self._send_btn.setEnabled(True)
+        # self._input.setEnabled(True)
+        # self._input.setFocus()
         
         # 保存最终内容
         if self._current_ai_message_id and self._current_ai_message:
@@ -1248,10 +1284,39 @@ class CompactChatWindow(QWidget):
         else:
             super().keyPressEvent(event)
             
+    def set_auto_hide(self, enabled: bool, duration: int = 5000):
+        """设置自动隐藏功能
+        Args:
+            enabled: 是否启用自动隐藏
+            duration: 隐藏延迟时间（毫秒）
+        """
+        self._auto_hide_enabled = enabled
+        self._auto_hide_duration = duration
+        
+    def _on_auto_hide_timeout(self):
+        """自动隐藏超时回调"""
+        if self._auto_hide_enabled and not self._is_waiting:
+            self.hide()
+            
+    def enterEvent(self, event):
+        """鼠标进入时停止自动隐藏"""
+        self._auto_hide_timer.stop()
+        super().enterEvent(event)
+        
+    def leaveEvent(self, event):
+        """鼠标离开时重启自动隐藏"""
+        if self._auto_hide_enabled and self.isVisible():
+            self._auto_hide_timer.start(self._auto_hide_duration)
+        super().leaveEvent(event)
+
     def showEvent(self, event):
         super().showEvent(event)
         self._input.setFocus()
         QTimer.singleShot(100, self._scroll_to_bottom)
+        
+        # 启动自动隐藏定时器
+        if self._auto_hide_enabled:
+            self._auto_hide_timer.start(self._auto_hide_duration)
 
 
 class FloatingBallWindow(QWidget):
@@ -1366,6 +1431,13 @@ class FloatingBallWindow(QWidget):
         if user_avatar_loaded or bot_avatar_loaded:
             # 使用更长的延迟确保头像已完全加载
             QTimer.singleShot(150, self._compact_window.reload_history_display)
+        
+        # 从配置加载自动隐藏设置
+        if hasattr(self.config, 'interaction'):
+            interaction = getattr(self.config, 'interaction')
+            auto_hide = getattr(interaction, 'bubble_auto_hide', False)
+            duration = getattr(interaction, 'bubble_duration', 5) * 1000  # 秒转毫秒
+            self._compact_window.set_auto_hide(auto_hide, duration)
         
         # 呼吸灯动画
         self._breath_timer = QTimer(self)
@@ -1871,6 +1943,13 @@ class FloatingBallWindow(QWidget):
         self._update_compact_window_position()
         self._compact_window.add_ai_message(text)
         self._compact_window.show()
+        
+    def toggle_input(self):
+        """切换输入框显示/隐藏"""
+        if self._compact_window.isVisible():
+            self._compact_window.hide()
+        else:
+            self.show_input()
         
     def show_input(self):
         """显示输入框 (显示精简窗口)"""

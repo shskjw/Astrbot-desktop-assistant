@@ -301,7 +301,7 @@ class DesktopClientApp(QObject):
             if content.strip() in ["[收到语音]", "🔊 [收到语音]"]:
                 return
             
-            # 主动对话响应：只在气泡中显示
+            # 主动对话响应：静默处理，不弹窗
             if is_proactive_response:
                 if message.streaming:
                     # 流式响应时累积内容
@@ -309,10 +309,14 @@ class DesktopClientApp(QObject):
                         self._proactive_response_buffer = ""
                     self._proactive_response_buffer += content
                 else:
-                    # 非流式完整响应
+                    # 非流式完整响应：静默添加到历史记录，不显示气泡
+                    get_chat_history_manager().add_message(
+                        role="assistant",
+                        content=content,
+                        msg_type="text"
+                    )
+                    # 仅设置未读消息标记
                     if self._floating_ball:
-                        self._floating_ball.show_bubble(content)
-                        # 触发未读消息动态效果
                         self._floating_ball.set_unread_message(True)
                     self._proactive_dialog_pending = False
                 return
@@ -357,12 +361,17 @@ class DesktopClientApp(QObject):
         elif msg_type == "end":
             # 主动对话响应结束
             if is_proactive_response:
-                # 显示累积的响应内容
+                # 静默添加累积的响应内容到历史记录，不显示气泡
                 buffer = getattr(self, '_proactive_response_buffer', '')
-                if buffer and self._floating_ball:
-                    self._floating_ball.show_bubble(buffer)
-                    # 触发未读消息动态效果
-                    self._floating_ball.set_unread_message(True)
+                if buffer:
+                    get_chat_history_manager().add_message(
+                        role="assistant",
+                        content=buffer,
+                        msg_type="text"
+                    )
+                    # 仅设置未读消息标记
+                    if self._floating_ball:
+                        self._floating_ball.set_unread_message(True)
                 # 清理状态
                 self._proactive_dialog_pending = False
                 self._proactive_response_buffer = ""
@@ -389,13 +398,14 @@ class DesktopClientApp(QObject):
                     self._floating_ball.show_bubble(f"❌ {content}")
             
     def _on_ball_clicked(self):
-        """悬浮球单击"""
+        """悬浮球单击 - 切换气泡对话显示/隐藏"""
         # 清除未读消息状态
         if self._floating_ball and self._floating_ball.has_unread_message():
             self._floating_ball.clear_unread_message()
         
-        # 统一只显示气泡/输入框，不再区分模式
-        self._show_bubble_input()
+        # 切换气泡窗口显示/隐藏
+        if self._floating_ball:
+            self._floating_ball.toggle_input()
             
     def _on_ball_double_clicked(self):
         """悬浮球双击：截图并触发主动对话"""
@@ -631,6 +641,9 @@ class DesktopClientApp(QObject):
         """下载媒体文件并显示"""
         save_path = self._get_save_path(filename, msg_type)
         
+        # 检查是否是主动对话的响应
+        is_proactive_response = getattr(self, '_proactive_dialog_pending', False)
+        
         success = await self._bridge.api_client.download_file(filename, save_path)
         
         if success and os.path.exists(save_path):
@@ -639,6 +652,23 @@ class DesktopClientApp(QObject):
             if msg_type == "voice":
                 # 构建消息内容：path|duration
                 content = f"{save_path}|0"
+                
+                # 主动对话的语音响应：后台自动播放，不显示窗口
+                if is_proactive_response:
+                    # 静默添加到历史记录
+                    get_chat_history_manager().add_message(
+                        role="assistant",
+                        content=content,
+                        msg_type="voice",
+                        file_path=save_path
+                    )
+                    # 后台播放语音
+                    self._play_audio(save_path)
+                    # 设置未读消息标记
+                    if self._floating_ball:
+                        self._floating_ball.set_unread_message(True)
+                    return
+                    
             elif msg_type == "video":
                 # 构建消息内容：path|thumbnail|duration (缩略图暂时为空)
                 content = f"{save_path}||0"

@@ -29,7 +29,7 @@ def get_app_path() -> str:
 
 
 def get_startup_command() -> str:
-    """获取启动命令"""
+    """获取启动命令（包含工作目录）"""
     if getattr(sys, 'frozen', False):
         return f'"{sys.executable}"'
     else:
@@ -37,7 +37,13 @@ def get_startup_command() -> str:
         pythonw_path = python_path.replace('python.exe', 'pythonw.exe')
         if os.path.exists(pythonw_path):
             python_path = pythonw_path
-        return f'"{python_path}" -m desktop_client'
+        
+        # 获取项目根目录（desktop_client 的父目录）
+        module_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        project_root = os.path.dirname(module_path)
+        
+        # 使用 cmd /c 切换到工作目录后再启动
+        return f'cmd /c "cd /d "{project_root}" && "{python_path}" -m desktop_client"'
 
 
 def is_autostart_enabled() -> bool:
