@@ -33,7 +33,9 @@ class AppearanceConfig:
     """外观配置"""
     ball_size: int = 64
     ball_opacity: float = 0.9
-    avatar_path: str = ""
+    avatar_path: str = ""  # 悬浮球头像（向后兼容，同时作为bot头像）
+    user_avatar_path: str = ""  # 用户头像路径
+    bot_avatar_path: str = ""  # Bot头像路径
     theme: str = "auto"
     always_on_top: bool = False
     breathing_enabled: bool = True
@@ -83,6 +85,8 @@ class StorageConfig:
     """存储配置"""
     # 图片/截图保存路径
     image_save_path: str = ""
+    # 聊天记录保存路径
+    chat_history_path: str = ""
     
     @property
     def resolved_image_save_path(self) -> Path:
@@ -99,6 +103,29 @@ class StorageConfig:
         default_path = Path("temp") / "images"
         default_path.mkdir(parents=True, exist_ok=True)
         return default_path
+    
+    @property
+    def resolved_chat_history_path(self) -> Path:
+        """获取解析后的聊天记录保存路径"""
+        if self.chat_history_path:
+            path = Path(self.chat_history_path)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+            except Exception as e:
+                print(f"无法创建聊天记录目录: {e}")
+        
+        # 默认路径: 配置目录下的 chat_history.json
+        # Windows: %APPDATA%/AstrBotDesktopClient/chat_history.json
+        # Linux/Mac: ~/.config/astrbot-desktop-client/chat_history.json
+        if os.name == 'nt':
+            base = os.environ.get('APPDATA', os.path.expanduser('~'))
+            config_dir = Path(base) / 'AstrBotDesktopClient'
+        else:
+            config_dir = Path.home() / '.config' / 'astrbot-desktop-client'
+        
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / 'chat_history.json'
 
 
 @dataclass

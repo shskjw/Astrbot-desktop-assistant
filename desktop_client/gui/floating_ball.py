@@ -8,9 +8,10 @@
 - 单击显示气泡对话
 - 双击打开对话窗口
 - 右键菜单
+- 聊天记录持久化和跨窗口同步
 """
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Set
 import os
 import math
 from enum import Enum
@@ -24,11 +25,12 @@ from PySide6.QtGui import (
     QFont, QPen, QLinearGradient, QRadialGradient,
     QPainterPath
 )
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QMenu, QApplication, QFrame
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QMenu, QApplication, QFrame, QSizePolicy
 
 from .themes import theme_manager, Theme
-from .simple_chat_window import PasteAwareTextEdit
+from .simple_chat_window import PasteAwareTextEdit, VoiceMessageWidget, format_duration
 from .markdown_utils import MarkdownLabel
+from ..services import get_chat_history_manager, ChatMessage
 
 
 class FloatingBallState(Enum):
@@ -40,7 +42,7 @@ class FloatingBallState(Enum):
     UNREAD_MESSAGE = "unread_message"  # 有未读消息
 
 
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QMenu, QApplication, QTextEdit, QScrollArea, QDialog, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QMenu, QApplication, QTextEdit, QScrollArea, QDialog, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy
 from PySide6.QtGui import QClipboard
 
 class ClickableImageLabel(QLabel):
@@ -52,11 +54,14 @@ class ClickableImageLabel(QLabel):
         super().__init__(parent)
         self._image_path = image_path
         self._original_pixmap: Optional[QPixmap] = None
+        self._scaled_size = QSize(0, 0)  # 记录缩放后的尺寸
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         # 连接点击信号到预览方法
         self.clicked.connect(self._show_preview)
+        # 设置固定的尺寸策略，防止被拉伸
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         
         if image_path:
             self.load_image(image_path)
@@ -68,13 +73,31 @@ class ClickableImageLabel(QLabel):
             pixmap = QPixmap(image_path)
             if not pixmap.isNull():
                 self._original_pixmap = pixmap
-                # 缩放为缩略图
+                # 缩放为缩略图，限制最大宽高
+                max_width = min(max_size, 200)
+                max_height = 150
                 scaled = pixmap.scaled(
-                    max_size, 150,
+                    max_width, max_height,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation
                 )
                 self.setPixmap(scaled)
+                # 记录缩放后的尺寸
+                self._scaled_size = scaled.size()
+                # 设置固定尺寸，避免多余空间
+                self.setFixedSize(scaled.width(), scaled.height())
+                # 设置对齐方式
+                self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    
+    def sizeHint(self):
+        """返回推荐尺寸"""
+        if self._scaled_size.isValid() and not self._scaled_size.isEmpty():
+            return self._scaled_size
+        return super().sizeHint()
+    
+    def minimumSizeHint(self):
+        """返回最小尺寸"""
+        return self.sizeHint()
                 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -330,6 +353,22 @@ class CompactChatWindow(QWidget):
         self._is_waiting = False
         self._current_ai_message = ""
         self._current_ai_label = None # 当前 AI 回复的 MarkdownLabel
+        self._current_ai_message_id: str = ""  # 当前流式响应的消息ID
+        
+        # 已显示消息ID集合，用于避免重复显示
+        self._displayed_message_ids: Set[str] = set()
+        
+        # 消息ID与MarkdownLabel的映射，用于更新消息
+        self._message_labels: dict = {}  # {message_id: MarkdownLabel}
+        
+        # 聊天记录管理器
+        self._chat_history = get_chat_history_manager()
+        
+        # 自定义头像路径
+        self._user_avatar_path = ""
+        self._bot_avatar_path = ""
+        self._user_avatar_pixmap: Optional[QPixmap] = None
+        self._bot_avatar_pixmap: Optional[QPixmap] = None
         
         # 主容器
         self._container = QFrame()
@@ -367,12 +406,14 @@ class CompactChatWindow(QWidget):
         self._scroll_area = QScrollArea()
         self._scroll_area.setObjectName("compactScroll")
         self._scroll_area.setWidgetResizable(True)
+        # 禁用横向滚动条，确保不会出现不必要的滚动条
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
-        # 自适应尺寸，不再设置固定最小/最大大小
+        # 设置固定宽度，避免布局问题
         self.setMinimumWidth(320)
-        self.setMaximumWidth(400)
+        self.setMaximumWidth(380)
+        self.setFixedWidth(360)
         
         self._history_widget = QWidget()
         self._history_layout = QVBoxLayout(self._history_widget)
@@ -427,6 +468,15 @@ class CompactChatWindow(QWidget):
         # 应用主题
         self._apply_theme()
         theme_manager.register_callback(self._on_theme_changed)
+        
+        # 连接聊天记录管理器的信号
+        self._chat_history.message_added.connect(self._on_history_message_added)
+        self._chat_history.message_updated.connect(self._on_history_message_updated)
+        self._chat_history.messages_cleared.connect(self._on_history_cleared)
+        self._chat_history.history_loaded.connect(self._on_history_loaded)
+        
+        # 加载历史记录
+        self._load_history()
         
     def _on_theme_changed(self, theme: Theme):
         self._apply_theme()
@@ -544,6 +594,246 @@ class CompactChatWindow(QWidget):
                             padding: 8px;
                         }}
                     """)
+    
+    def set_user_avatar(self, avatar_path: str):
+        """设置用户头像路径"""
+        self._user_avatar_path = avatar_path
+        if avatar_path and os.path.exists(avatar_path):
+            pixmap = QPixmap(avatar_path)
+            if not pixmap.isNull():
+                # 缩放为圆形头像
+                self._user_avatar_pixmap = pixmap.scaled(
+                    24, 24,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+        else:
+            self._user_avatar_pixmap = None
+            
+    def set_bot_avatar(self, avatar_path: str):
+        """设置Bot头像路径"""
+        self._bot_avatar_path = avatar_path
+        if avatar_path and os.path.exists(avatar_path):
+            pixmap = QPixmap(avatar_path)
+            if not pixmap.isNull():
+                # 缩放为圆形头像
+                self._bot_avatar_pixmap = pixmap.scaled(
+                    24, 24,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+        else:
+            self._bot_avatar_pixmap = None
+    
+    def _load_history(self):
+        """加载聊天历史记录"""
+        # 显示已有的消息
+        messages = self._chat_history.get_messages()
+        for msg in messages:
+            self._display_message_from_history(msg)
+    
+    def _display_message_from_history(self, msg: ChatMessage):
+        """从历史记录中显示消息（不会再次添加到历史记录）"""
+        if msg.id in self._displayed_message_ids:
+            return  # 已经显示过了
+        
+        self._displayed_message_ids.add(msg.id)
+        
+        if msg.role == "user":
+            # 用户消息
+            if msg.msg_type == "image" and msg.file_path:
+                self._display_user_image(msg.file_path)
+            else:
+                self._display_user_text(msg.content)
+        else:
+            # AI消息
+            if msg.msg_type == "voice":
+                # 语音消息：使用 content 解析音频路径和时长
+                self._display_ai_voice(msg.content, msg.id)
+            else:
+                label = self._display_ai_text(msg.content, msg.id)
+                if label:
+                    self._message_labels[msg.id] = label
+    
+    def _display_user_text(self, text: str):
+        """显示用户文本消息（仅UI，不添加到历史）"""
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addStretch()
+        
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
+        t = theme_manager.current_theme
+        c = t.colors
+        lbl.setStyleSheet(f"""
+            QLabel {{
+                color: {c.text_primary};
+                background-color: {c.bg_secondary};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+        """)
+        lbl.setMaximumWidth(240)
+        layout.addWidget(lbl)
+        container.adjustSize()
+        
+        self._add_to_history(container, is_image=False)
+    
+    def _display_user_image(self, image_path: str):
+        """显示用户图片消息（仅UI，不添加到历史）"""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addStretch()
+        
+        lbl = ClickableImageLabel(image_path)
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(lbl)
+        container.adjustSize()
+        container.setFixedHeight(lbl.height())
+        
+        self._add_to_history(container, is_image=True)
+    
+    def _display_ai_text(self, text: str, message_id: str = "") -> Optional[MarkdownLabel]:
+        """显示AI文本消息（仅UI，不添加到历史）"""
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # 机器人头像
+        avatar = QLabel()
+        avatar.setFixedSize(24, 24)
+        avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        
+        if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
+            circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 24)
+            avatar.setPixmap(circular_avatar)
+            avatar.setStyleSheet("background: transparent;")
+        else:
+            avatar.setText("🤖")
+            avatar.setStyleSheet("font-size: 16px;")
+        
+        layout.addWidget(avatar, alignment=Qt.AlignmentFlag.AlignTop)
+        
+        md_label = MarkdownLabel(text, parent=container)
+        md_label.setMaximumWidth(260)
+        md_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
+        layout.addWidget(md_label)
+        
+        layout.addStretch()
+        container.adjustSize()
+        
+        self._add_to_history(container)
+        
+        return md_label
+    
+    def _display_ai_voice(self, content: str, message_id: str = ""):
+        """显示AI语音消息（仅UI，不添加到历史）
+        
+        Args:
+            content: 格式为 "audio_path|duration" 或仅 "audio_path"
+            message_id: 消息ID
+        """
+        # 解析内容获取音频路径和时长
+        parts = content.split("|")
+        audio_path = parts[0].strip()
+        duration = float(parts[1]) if len(parts) > 1 else 0
+        
+        # 验证音频路径存在
+        if not audio_path or not os.path.exists(audio_path):
+            # 如果路径无效，显示为文本消息
+            self._display_ai_text(f"🔊 [语音消息: {audio_path}]", message_id)
+            return
+        
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        
+        # 机器人头像
+        avatar = QLabel()
+        avatar.setFixedSize(24, 24)
+        avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        
+        if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
+            circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 24)
+            avatar.setPixmap(circular_avatar)
+            avatar.setStyleSheet("background: transparent;")
+        else:
+            avatar.setText("🤖")
+            avatar.setStyleSheet("font-size: 16px;")
+        
+        layout.addWidget(avatar, alignment=Qt.AlignmentFlag.AlignTop)
+        
+        voice_widget = VoiceMessageWidget(audio_path, duration, parent=container)
+        voice_widget.setMaximumWidth(260)
+        layout.addWidget(voice_widget)
+        
+        layout.addStretch()
+        container.adjustSize()
+        
+        self._add_to_history(container)
+    
+    def _on_history_message_added(self, msg: ChatMessage):
+        """处理历史记录管理器发出的消息添加信号"""
+        if msg.id in self._displayed_message_ids:
+            return
+        
+        self._display_message_from_history(msg)
+        self._scroll_to_bottom()
+    
+    def _on_history_message_updated(self, message_id: str, new_content: str):
+        """处理历史记录管理器发出的消息更新信号"""
+        # 如果是当前正在流式响应的消息，更新MarkdownLabel
+        if message_id in self._message_labels:
+            label = self._message_labels[message_id]
+            if label and isinstance(label, MarkdownLabel):
+                label.set_markdown(new_content)
+                self._scroll_to_bottom()
+    
+    def _on_history_cleared(self):
+        """处理历史记录清除信号"""
+        # 清空所有显示的消息
+        while self._history_layout.count() > 1:  # 保留 stretch
+            item = self._history_layout.itemAt(0)
+            if item and item.widget():
+                w = item.widget()
+                self._history_layout.removeWidget(w)
+                w.deleteLater()
+        
+        self._displayed_message_ids.clear()
+        self._message_labels.clear()
+        self._current_ai_label = None
+        self._current_ai_message_id = ""
+        self._update_geometry()
+    
+    def _on_history_loaded(self):
+        """处理历史记录加载完成信号"""
+        # 清空当前显示
+        while self._history_layout.count() > 1:
+            item = self._history_layout.itemAt(0)
+            if item and item.widget():
+                w = item.widget()
+                self._history_layout.removeWidget(w)
+                w.deleteLater()
+        
+        self._displayed_message_ids.clear()
+        self._message_labels.clear()
+        
+        # 重新加载显示
+        messages = self._chat_history.get_messages()
+        for msg in messages:
+            self._display_message_from_history(msg)
+        
+        self._scroll_to_bottom()
 
     def _on_close(self):
         self.hide()
@@ -570,74 +860,253 @@ class CompactChatWindow(QWidget):
             return
             
         if self._attachment_path:
-            self.add_user_message(text or "[图片]", image_path=self._attachment_path)
+            # 添加图片消息到历史记录
+            msg = self._chat_history.add_message(
+                role="user",
+                content=text or "[图片]",
+                msg_type="image",
+                file_path=self._attachment_path
+            )
+            # 显示消息
+            if msg.id not in self._displayed_message_ids:
+                self._displayed_message_ids.add(msg.id)
+                self._display_user_image(self._attachment_path)
+                if text:
+                    # 如果有文字，也添加文字消息
+                    text_msg = self._chat_history.add_message(
+                        role="user",
+                        content=text,
+                        msg_type="text"
+                    )
+                    if text_msg.id not in self._displayed_message_ids:
+                        self._displayed_message_ids.add(text_msg.id)
+                        self._display_user_text(text)
+            
             self.image_sent.emit(self._attachment_path, text)
             self.clear_attachment()
         else:
-            self.add_user_message(text)
+            # 添加文本消息到历史记录
+            msg = self._chat_history.add_message(
+                role="user",
+                content=text,
+                msg_type="text"
+            )
+            # 显示消息
+            if msg.id not in self._displayed_message_ids:
+                self._displayed_message_ids.add(msg.id)
+                self._display_user_text(text)
+            
             self.message_sent.emit(text)
             
         self._input.clear()
         self._start_waiting()
         
     def _start_waiting(self):
+        """开始等待响应状态，但不创建占位消息
+        
+        占位消息会导致消息重复问题，所以改为：
+        - 仅设置等待状态标志
+        - 禁用输入控件
+        - 不创建占位消息，等待实际响应到来
+        """
         self._is_waiting = True
         self._send_btn.setEnabled(False)
         self._input.setEnabled(False)
         
-        # 添加一个空的 AI 消息占位
-        self._current_ai_message = "..."
-        self._current_ai_label = self.add_ai_message("...")
+        # 不再创建占位消息，避免消息重复
+        # 当调用 update_streaming_response 或 add_ai_message 时再创建消息
+        self._current_ai_message_id = ""
+        self._current_ai_message = ""
+        self._current_ai_label = None
         
     def add_user_message(self, text: str, image_path: Optional[str] = None):
-        """添加用户消息"""
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addStretch() # 右对齐
-        
+        """添加用户消息（通过历史记录管理器）"""
         if image_path:
-            lbl = ClickableImageLabel(image_path)
+            # 添加图片消息
+            msg = self._chat_history.add_message(
+                role="user",
+                content=text,
+                msg_type="image",
+                file_path=image_path
+            )
+            if msg.id not in self._displayed_message_ids:
+                self._displayed_message_ids.add(msg.id)
+                self._display_user_image(image_path)
         else:
-            lbl = QLabel(text)
-            lbl.setWordWrap(True)
-            t = theme_manager.current_theme
-            c = t.colors
-            lbl.setStyleSheet(f"""
-                QLabel {{
-                    color: {c.text_primary};
-                    background-color: {c.bg_secondary};
-                    border-radius: 8px;
-                    padding: 8px;
-                    max-width: 260px;
-                }}
-            """)
-            
-        layout.addWidget(lbl)
-        self._add_to_history(container)
+            # 添加文本消息
+            msg = self._chat_history.add_message(
+                role="user",
+                content=text,
+                msg_type="text"
+            )
+            if msg.id not in self._displayed_message_ids:
+                self._displayed_message_ids.add(msg.id)
+                self._display_user_text(text)
         
-    def add_ai_message(self, text: str):
-        """添加 AI 消息 (Markdown)"""
+    def _create_circular_avatar(self, pixmap: QPixmap, size: int = 24) -> QPixmap:
+        """创建圆形头像"""
+        rounded_pixmap = QPixmap(size, size)
+        rounded_pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(rounded_pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 绘制圆形裁剪路径
+        path = QPainterPath()
+        path.addEllipse(0, 0, size, size)
+        painter.setClipPath(path)
+        
+        # 绘制头像
+        painter.drawPixmap(0, 0, size, size, pixmap)
+        painter.end()
+        
+        return rounded_pixmap
+    
+    def add_ai_message(self, text: str, msg_type: str = "text"):
+        """添加 AI 消息（通过历史记录管理器）
+        
+        Args:
+            text: 消息内容。对于语音消息，格式为 "path|duration"
+            msg_type: 消息类型，"text" 或 "voice"
+        """
+        # 如果有等待中的消息（占位消息 "..."），需要替换它而不是创建新消息
+        if self._current_ai_message_id and self._is_waiting:
+            # 更新占位消息的内容和类型
+            if msg_type == "voice":
+                # 语音消息需要特殊处理：删除占位消息的MarkdownLabel，显示语音组件
+                self._replace_waiting_with_voice(text)
+            else:
+                # 文本消息：直接更新占位消息的内容
+                self._chat_history.update_message(self._current_ai_message_id, text)
+                if self._current_ai_label:
+                    self._current_ai_label.set_markdown(text)
+            
+            self.finish_response()
+            return self._current_ai_label
+        
+        # 没有等待中的消息，正常添加新消息
+        # 解析语音消息的文件路径
+        file_path = ""
+        if msg_type == "voice":
+            parts = text.split("|")
+            file_path = parts[0] if parts else ""
+        
+        # 添加到历史记录
+        msg = self._chat_history.add_message(
+            role="assistant",
+            content=text,
+            msg_type=msg_type,
+            file_path=file_path
+        )
+        
+        # 显示消息
+        if msg.id not in self._displayed_message_ids:
+            self._displayed_message_ids.add(msg.id)
+            if msg_type == "voice":
+                self._display_ai_voice(text, msg.id)
+                return None
+            else:
+                label = self._display_ai_text(text, msg.id)
+                if label:
+                    self._message_labels[msg.id] = label
+                return label
+        
+        return None
+    
+    def _replace_waiting_with_voice(self, content: str):
+        """将等待中的占位消息替换为语音消息组件
+        
+        Args:
+            content: 格式为 "audio_path|duration" 或仅 "audio_path"
+        """
+        if not self._current_ai_message_id:
+            return
+        
+        # 更新历史记录中的消息类型和内容
+        # 由于 ChatHistoryManager.update_message 只更新内容，我们需要删除旧消息并添加新消息
+        # 但为了简化，我们先更新内容，然后在UI层做替换
+        
+        # 解析音频路径
+        parts = content.split("|")
+        audio_path = parts[0].strip()
+        
+        # 更新历史记录
+        self._chat_history.update_message(self._current_ai_message_id, content)
+        
+        # 找到并删除占位消息的UI组件
+        if self._current_ai_label:
+            # 找到包含这个label的container widget
+            parent_obj = self._current_ai_label.parent()
+            if parent_obj and isinstance(parent_obj, QWidget):
+                parent_widget = parent_obj
+                # 从历史layout中移除
+                for i in range(self._history_layout.count()):
+                    item = self._history_layout.itemAt(i)
+                    if item and item.widget() == parent_widget:
+                        self._history_layout.removeWidget(parent_widget)
+                        parent_widget.deleteLater()
+                        break
+            
+            # 从映射中删除
+            if self._current_ai_message_id in self._message_labels:
+                del self._message_labels[self._current_ai_message_id]
+            
+            self._current_ai_label = None
+        
+        # 显示语音消息组件
+        self._display_ai_voice(content, self._current_ai_message_id)
+    
+    def add_voice_message(self, audio_path: str, duration: float = 0, is_user: bool = False):
+        """添加语音消息
+        
+        Args:
+            audio_path: 音频文件路径
+            duration: 音频时长（秒）
+            is_user: 是否是用户消息
+        """
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
         
-        # 机器人头像
-        avatar = QLabel("🤖")
-        avatar.setFixedSize(24, 24)
-        avatar.setStyleSheet("font-size: 16px;")
-        layout.addWidget(avatar, alignment=Qt.AlignmentFlag.AlignTop)
+        if is_user:
+            # 用户消息：右对齐
+            layout.addStretch()
+            voice_widget = VoiceMessageWidget(audio_path, duration, parent=container)
+            voice_widget.setMaximumWidth(240)
+            layout.addWidget(voice_widget)
+        else:
+            # AI 消息：左对齐，带头像
+            avatar = QLabel()
+            avatar.setFixedSize(24, 24)
+            avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            
+            if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
+                circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 24)
+                avatar.setPixmap(circular_avatar)
+                avatar.setStyleSheet("background: transparent;")
+            else:
+                avatar.setText("🤖")
+                avatar.setStyleSheet("font-size: 16px;")
+            
+            layout.addWidget(avatar, alignment=Qt.AlignmentFlag.AlignTop)
+            
+            voice_widget = VoiceMessageWidget(audio_path, duration, parent=container)
+            voice_widget.setMaximumWidth(260)
+            layout.addWidget(voice_widget)
+            layout.addStretch()
         
-        # Markdown 内容
-        md_label = MarkdownLabel(text, parent=container)
-        md_label.setMaximumWidth(280) # 限制宽度
-        layout.addWidget(md_label)
-        layout.addStretch()
-        
+        container.adjustSize()
         self._add_to_history(container)
-        return md_label
         
-    def _add_to_history(self, widget: QWidget):
+    def _add_to_history(self, widget: QWidget, is_image: bool = False):
+        # 设置widget的大小策略（图片消息保持 Fixed 高度）
+        if not is_image:
+            widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        # 如果是图片消息，保留其 Fixed 高度策略
+        widget.setMaximumWidth(340)  # 限制最大宽度，避免横向滚动条
+        
         # 插入到 stretch 之前
         count = self._history_layout.count()
         self._history_layout.insertWidget(count - 1, widget)
@@ -649,17 +1118,21 @@ class CompactChatWindow(QWidget):
                 w = item.widget()
                 self._history_layout.removeWidget(w)
                 w.deleteLater()
-                
-        self._update_geometry()
+        
+        # 延迟更新布局，确保widget已完成布局
+        QTimer.singleShot(10, self._update_geometry)
         QTimer.singleShot(50, self._scroll_to_bottom)
     
     def _update_geometry(self):
         """根据内容自适应调整窗口高度"""
+        # 强制历史widget重新计算大小
+        self._history_widget.adjustSize()
+        
         # 计算内容高度
         content_height = self._history_widget.sizeHint().height()
         
-        # 基础高度（标题栏 + 输入框等）
-        base_height = 100
+        # 基础高度（标题栏约40 + 输入框约60 + 边距约20）
+        base_height = 120
         if self._preview_frame.isVisible():
             base_height += 50
             
@@ -667,11 +1140,12 @@ class CompactChatWindow(QWidget):
         
         # 限制高度范围
         min_height = 200
-        max_height = 600
+        max_height = 500
         
         final_height = max(min(target_height, max_height), min_height)
         
-        self.resize(self.width(), final_height)
+        # 使用固定宽度
+        self.setFixedSize(360, final_height)
 
     def _scroll_to_bottom(self):
         scrollbar = self._scroll_area.verticalScrollBar()
@@ -679,10 +1153,32 @@ class CompactChatWindow(QWidget):
 
     def update_streaming_response(self, content: str):
         """更新流式响应"""
-        if self._current_ai_label:
-            self._current_ai_message = content
-            self._current_ai_label.set_markdown(content)
-            self._scroll_to_bottom()
+        self._current_ai_message = content
+        
+        # 如果还没有创建AI消息，先创建一个
+        if not self._current_ai_message_id:
+            msg = self._chat_history.add_message(
+                role="assistant",
+                content=content,
+                msg_type="text"
+            )
+            self._current_ai_message_id = msg.id
+            
+            # 显示消息
+            if msg.id not in self._displayed_message_ids:
+                self._displayed_message_ids.add(msg.id)
+                label = self._display_ai_text(content, msg.id)
+                if label:
+                    self._current_ai_label = label
+                    self._message_labels[msg.id] = label
+        else:
+            # 更新历史记录中的消息
+            self._chat_history.update_message(self._current_ai_message_id, content)
+            # 直接更新当前label
+            if self._current_ai_label:
+                self._current_ai_label.set_markdown(content)
+        
+        self._scroll_to_bottom()
             
     def finish_response(self):
         """响应结束"""
@@ -690,7 +1186,16 @@ class CompactChatWindow(QWidget):
         self._send_btn.setEnabled(True)
         self._input.setEnabled(True)
         self._input.setFocus()
+        
+        # 保存最终内容
+        if self._current_ai_message_id and self._current_ai_message:
+            self._chat_history.update_message(self._current_ai_message_id, self._current_ai_message)
+        
         self._current_ai_label = None
+        self._current_ai_message_id = ""
+        
+        # 确保保存
+        self._chat_history.save_to_file()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -781,6 +1286,33 @@ class FloatingBallWindow(QWidget):
         self._compact_window.message_sent.connect(self.message_sent)
         self._compact_window.image_sent.connect(self.image_sent)
         
+        # 从配置加载用户和Bot头像并传递给精简窗口
+        if hasattr(self.config, 'appearance'):
+            appearance = getattr(self.config, 'appearance')
+            # 加载用户头像
+            user_avatar = ""
+            if hasattr(appearance, 'user_avatar_path'):
+                user_avatar = appearance.user_avatar_path or ""
+            elif isinstance(appearance, dict) and 'user_avatar_path' in appearance:
+                user_avatar = appearance.get('user_avatar_path', '') or ""
+            if user_avatar:
+                self._compact_window.set_user_avatar(user_avatar)
+            
+            # 加载Bot头像
+            bot_avatar = ""
+            if hasattr(appearance, 'bot_avatar_path'):
+                bot_avatar = appearance.bot_avatar_path or ""
+            elif isinstance(appearance, dict) and 'bot_avatar_path' in appearance:
+                bot_avatar = appearance.get('bot_avatar_path', '') or ""
+            # 如果没有bot_avatar_path，尝试使用旧的avatar_path
+            if not bot_avatar:
+                if hasattr(appearance, 'avatar_path'):
+                    bot_avatar = appearance.avatar_path or ""
+                elif isinstance(appearance, dict) and 'avatar_path' in appearance:
+                    bot_avatar = appearance.get('avatar_path', '') or ""
+            if bot_avatar:
+                self._compact_window.set_bot_avatar(bot_avatar)
+        
         # 呼吸灯动画
         self._breath_timer = QTimer(self)
         self._breath_timer.timeout.connect(self._update_breathing)
@@ -841,8 +1373,16 @@ class FloatingBallWindow(QWidget):
         self.update()
         
     def set_avatar(self, avatar_path: str):
-        """设置头像"""
+        """设置悬浮球头像"""
         self._load_avatar(avatar_path)
+        
+    def set_user_avatar(self, avatar_path: str):
+        """设置用户头像（传递给精简窗口）"""
+        self._compact_window.set_user_avatar(avatar_path)
+        
+    def set_bot_avatar(self, avatar_path: str):
+        """设置Bot头像（传递给精简窗口）"""
+        self._compact_window.set_bot_avatar(avatar_path)
         
     def _update_breathing(self):
         """更新呼吸灯效果"""

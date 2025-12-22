@@ -25,6 +25,8 @@ from qasync import asyncSlot
 
 from ..api_client import AstrBotApiClient
 from ..utils.autostart import is_autostart_enabled, set_autostart
+from ..services import get_chat_history_manager
+from ..config import save_config, ClientConfig
 from .themes import theme_manager, Theme
 from .hotkeys import HotkeyConfig, hotkey_manager
 
@@ -53,18 +55,29 @@ class SettingsSection(QFrame):
         self._content_layout.setSpacing(12)
         layout.addWidget(self._content)
         
-    def add_row(self, label: str, widget: QWidget):
+    def add_row(self, label: str, widget: QWidget, orientation: str = "horizontal"):
         """添加一行设置项"""
         row = QFrame()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
         
-        lbl = QLabel(label)
-        lbl.setObjectName("settingLabel")
-        lbl.setMinimumWidth(120)
-        
-        row_layout.addWidget(lbl)
-        row_layout.addWidget(widget, 1)
+        if orientation == "vertical":
+            row_layout = QVBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+            
+            lbl = QLabel(label)
+            lbl.setObjectName("settingLabel")
+            row_layout.addWidget(lbl)
+            row_layout.addWidget(widget)
+        else:
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            
+            lbl = QLabel(label)
+            lbl.setObjectName("settingLabel")
+            lbl.setMinimumWidth(120)
+            
+            row_layout.addWidget(lbl)
+            row_layout.addWidget(widget, 1)
         
         self._content_layout.addWidget(row)
         return row
@@ -80,9 +93,9 @@ class SettingsWindow(QWidget):
     settings_changed = Signal(dict)
     closed = Signal()
     
-    def __init__(self, config=None, parent=None):
+    def __init__(self, config: Optional[ClientConfig] = None, parent=None):
         super().__init__(parent)
-        self.config = config or {}
+        self.config = config if config is not None else ClientConfig()
         
         self.setWindowTitle("设置")
         self.setMinimumSize(500, 600)
@@ -196,7 +209,18 @@ class SettingsWindow(QWidget):
     def _create_appearance_tab(self) -> QWidget:
         """创建外观设置标签页"""
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # 滚动内容容器
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(16, 16, 16, 16)
         
         # 主题设置
@@ -210,10 +234,87 @@ class SettingsWindow(QWidget):
         
         layout.addWidget(theme_section)
         
+        # 头像设置
+        avatar_section = SettingsSection("头像设置")
+        
+        # 用户头像
+        user_avatar_row = QFrame()
+        user_avatar_layout = QHBoxLayout(user_avatar_row)
+        user_avatar_layout.setContentsMargins(0, 0, 0, 0)
+        
+        user_avatar_label = QLabel("用户头像")
+        user_avatar_label.setObjectName("settingLabel")
+        user_avatar_label.setMinimumWidth(80)
+        
+        self._user_avatar_preview = QLabel()
+        self._user_avatar_preview.setFixedSize(48, 48)
+        self._user_avatar_preview.setObjectName("avatarPreview")
+        self._user_avatar_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._user_avatar_preview.setText("👤")
+        
+        user_avatar_btns = QFrame()
+        user_btns_layout = QHBoxLayout(user_avatar_btns)
+        user_btns_layout.setContentsMargins(0, 0, 0, 0)
+        user_btns_layout.setSpacing(8)
+        
+        self._upload_user_avatar_btn = QPushButton("选择图片")
+        self._upload_user_avatar_btn.clicked.connect(self._on_upload_user_avatar)
+        
+        self._reset_user_avatar_btn = QPushButton("恢复默认")
+        self._reset_user_avatar_btn.clicked.connect(self._on_reset_user_avatar)
+        
+        user_btns_layout.addWidget(self._upload_user_avatar_btn)
+        user_btns_layout.addWidget(self._reset_user_avatar_btn)
+        
+        user_avatar_layout.addWidget(user_avatar_label)
+        user_avatar_layout.addWidget(self._user_avatar_preview)
+        user_avatar_layout.addWidget(user_avatar_btns)
+        user_avatar_layout.addStretch()
+        
+        avatar_section.add_widget(user_avatar_row)
+        
+        # Bot头像
+        bot_avatar_row = QFrame()
+        bot_avatar_layout = QHBoxLayout(bot_avatar_row)
+        bot_avatar_layout.setContentsMargins(0, 0, 0, 0)
+        
+        bot_avatar_label = QLabel("Bot头像")
+        bot_avatar_label.setObjectName("settingLabel")
+        bot_avatar_label.setMinimumWidth(80)
+        
+        self._bot_avatar_preview = QLabel()
+        self._bot_avatar_preview.setFixedSize(48, 48)
+        self._bot_avatar_preview.setObjectName("avatarPreview")
+        self._bot_avatar_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bot_avatar_preview.setText("🤖")
+        
+        bot_avatar_btns = QFrame()
+        bot_btns_layout = QHBoxLayout(bot_avatar_btns)
+        bot_btns_layout.setContentsMargins(0, 0, 0, 0)
+        bot_btns_layout.setSpacing(8)
+        
+        self._upload_bot_avatar_btn = QPushButton("选择图片")
+        self._upload_bot_avatar_btn.clicked.connect(self._on_upload_bot_avatar)
+        
+        self._reset_bot_avatar_btn = QPushButton("恢复默认")
+        self._reset_bot_avatar_btn.clicked.connect(self._on_reset_bot_avatar)
+        
+        bot_btns_layout.addWidget(self._upload_bot_avatar_btn)
+        bot_btns_layout.addWidget(self._reset_bot_avatar_btn)
+        
+        bot_avatar_layout.addWidget(bot_avatar_label)
+        bot_avatar_layout.addWidget(self._bot_avatar_preview)
+        bot_avatar_layout.addWidget(bot_avatar_btns)
+        bot_avatar_layout.addStretch()
+        
+        avatar_section.add_widget(bot_avatar_row)
+        
+        layout.addWidget(avatar_section)
+        
         # 悬浮球设置
         ball_section = SettingsSection("悬浮球设置")
         
-        # 头像预览
+        # 悬浮球头像预览（使用Bot头像）
         avatar_row = QFrame()
         avatar_layout = QHBoxLayout(avatar_row)
         avatar_layout.setContentsMargins(0, 0, 0, 0)
@@ -274,6 +375,10 @@ class SettingsWindow(QWidget):
         
         layout.addWidget(system_section)
         layout.addStretch()
+        
+        # 设置滚动内容
+        scroll_area.setWidget(scroll_content)
+        tab_layout.addWidget(scroll_area)
         
         return tab
         
@@ -354,6 +459,14 @@ class SettingsWindow(QWidget):
         bubble_section.add_widget(self._bubble_auto_hide)
         
         layout.addWidget(bubble_section)
+        
+        # 语音设置
+        voice_section = SettingsSection("语音设置")
+        
+        self._auto_play_voice = QCheckBox("收到语音消息时自动播放")
+        voice_section.add_widget(self._auto_play_voice)
+        
+        layout.addWidget(voice_section)
         layout.addStretch()
         
         return tab
@@ -382,15 +495,60 @@ class SettingsWindow(QWidget):
         path_layout.addWidget(self._image_save_path)
         path_layout.addWidget(browse_btn)
         
-        section.add_row("图片/截图保存路径", path_row)
+        section.add_row("图片/截图保存路径", path_row, orientation="vertical")
         
         layout.addWidget(section)
+        
+        # 聊天记录存储
+        chat_section = SettingsSection("聊天记录")
+        
+        # 聊天记录保存路径
+        chat_path_row = QFrame()
+        chat_path_layout = QHBoxLayout(chat_path_row)
+        chat_path_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._chat_history_path = QLineEdit()
+        self._chat_history_path.setPlaceholderText("默认路径 (配置目录/chat_history.json)")
+        self._chat_history_path.setReadOnly(False)
+        
+        chat_browse_btn = QPushButton("浏览...")
+        chat_browse_btn.setFixedWidth(80)
+        chat_browse_btn.clicked.connect(self._on_browse_chat_history_path)
+        
+        chat_path_layout.addWidget(self._chat_history_path)
+        chat_path_layout.addWidget(chat_browse_btn)
+        
+        chat_section.add_row("聊天记录保存路径", chat_path_row, orientation="vertical")
+        
+        # 清空聊天记录按钮
+        clear_btn_row = QFrame()
+        clear_btn_layout = QHBoxLayout(clear_btn_row)
+        clear_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._clear_chat_btn = QPushButton("🗑️ 清空聊天记录")
+        self._clear_chat_btn.setObjectName("dangerBtn")
+        self._clear_chat_btn.clicked.connect(self._on_clear_chat_history)
+        
+        # 获取当前聊天记录数量
+        chat_manager = get_chat_history_manager()
+        msg_count = chat_manager.get_message_count()
+        self._chat_count_label = QLabel(f"当前共 {msg_count} 条消息")
+        self._chat_count_label.setObjectName("infoLabel")
+        
+        clear_btn_layout.addWidget(self._clear_chat_btn)
+        clear_btn_layout.addWidget(self._chat_count_label)
+        clear_btn_layout.addStretch()
+        
+        chat_section.add_widget(clear_btn_row)
+        
+        layout.addWidget(chat_section)
         
         # 说明
         info_section = SettingsSection("说明")
         info_label = QLabel(
-            "设置截图和 AI 生成图片的本地保存位置。\n"
-            "留空则使用默认路径 (./temp/images)。"
+            "• 图片/截图保存路径：设置截图和 AI 生成图片的本地保存位置，留空则使用默认路径。\n"
+            "• 聊天记录保存路径：设置聊天记录的保存位置，留空则使用默认路径。\n"
+            "• 清空聊天记录将删除所有历史消息，此操作不可恢复。"
         )
         info_label.setWordWrap(True)
         info_label.setObjectName("infoLabel")
@@ -410,6 +568,39 @@ class SettingsWindow(QWidget):
         )
         if path:
             self._image_save_path.setText(path)
+    
+    def _on_browse_chat_history_path(self):
+        """浏览聊天记录保存路径"""
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择聊天记录保存位置",
+            self._chat_history_path.text() or "chat_history.json",
+            "JSON 文件 (*.json)"
+        )
+        if path:
+            self._chat_history_path.setText(path)
+    
+    def _on_clear_chat_history(self):
+        """清空聊天记录"""
+        chat_manager = get_chat_history_manager()
+        msg_count = chat_manager.get_message_count()
+        
+        if msg_count == 0:
+            QMessageBox.information(self, "提示", "聊天记录已经是空的。")
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "确认清空",
+            f"确定要清空所有 {msg_count} 条聊天记录吗？\n此操作不可恢复！",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            chat_manager.clear_history()
+            self._chat_count_label.setText("当前共 0 条消息")
+            QMessageBox.information(self, "成功", "聊天记录已清空。")
 
     def _create_proactive_tab(self) -> QWidget:
         """创建主动对话设置标签页"""
@@ -699,6 +890,15 @@ class SettingsWindow(QWidget):
                 background-color: #218838;
             }}
             
+            QPushButton#dangerBtn {{
+                background-color: #dc3545;
+                color: white;
+                border: none;
+            }}
+            QPushButton#dangerBtn:hover {{
+                background-color: #c82333;
+            }}
+            
             QFrame#bottomBar {{
                 background-color: {c.bg_secondary};
                 border-top: 1px solid {c.border_light};
@@ -728,15 +928,41 @@ class SettingsWindow(QWidget):
         if hasattr(self.config, 'appearance'):
             self._ball_size.setValue(self.config.appearance.ball_size)
             self._breathing_enabled.setChecked(self.config.appearance.breathing_enabled)
+            
+            # 悬浮球头像
             if self.config.appearance.avatar_path:
                 self._avatar_path = self.config.appearance.avatar_path
                 pixmap = QPixmap(self._avatar_path)
                 if not pixmap.isNull():
                     pixmap = pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                     self._avatar_preview.setPixmap(pixmap)
+            
+            # 用户头像
+            if hasattr(self.config.appearance, 'user_avatar_path') and self.config.appearance.user_avatar_path:
+                self._user_avatar_path = self.config.appearance.user_avatar_path
+                pixmap = QPixmap(self._user_avatar_path)
+                if not pixmap.isNull():
+                    pixmap = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    self._user_avatar_preview.setPixmap(pixmap)
+            else:
+                self._user_avatar_path = ""
+            
+            # Bot头像
+            if hasattr(self.config.appearance, 'bot_avatar_path') and self.config.appearance.bot_avatar_path:
+                self._bot_avatar_path = self.config.appearance.bot_avatar_path
+                pixmap = QPixmap(self._bot_avatar_path)
+                if not pixmap.isNull():
+                    pixmap = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    self._bot_avatar_preview.setPixmap(pixmap)
+            else:
+                self._bot_avatar_path = ""
+            
             # 开机自启 - 优先从注册表读取实际状态
             if os.name == 'nt':
                 self._auto_start.setChecked(is_autostart_enabled())
+        else:
+            self._user_avatar_path = ""
+            self._bot_avatar_path = ""
 
         # 主题设置
         current_theme = theme_manager.current_theme.name
@@ -781,6 +1007,10 @@ class SettingsWindow(QWidget):
             self._bubble_duration.setValue(self.config.interaction.bubble_duration)
             self._bubble_auto_hide.setChecked(self.config.interaction.bubble_auto_hide)
         
+        # 语音设置
+        if hasattr(self.config, 'voice'):
+            self._auto_play_voice.setChecked(self.config.voice.auto_play_voice)
+
         # 主动对话设置
         if hasattr(self.config, 'proactive'):
             self._proactive_enabled.setChecked(self.config.proactive.enabled)
@@ -822,6 +1052,15 @@ class SettingsWindow(QWidget):
         # 存储设置
         if hasattr(self.config, 'storage'):
             self._image_save_path.setText(self.config.storage.image_save_path or "")
+            self._chat_history_path.setText(self.config.storage.chat_history_path or "")
+            
+            # 确保图片保存路径显示正确
+            self._image_save_path.setText(self.config.storage.image_save_path or "")
+            
+            # 更新聊天记录数量
+        chat_manager = get_chat_history_manager()
+        msg_count = chat_manager.get_message_count()
+        self._chat_count_label.setText(f"当前共 {msg_count} 条消息")
                 
     def _on_theme_selected(self, index: int):
         """主题选择变化"""
@@ -830,7 +1069,7 @@ class SettingsWindow(QWidget):
             theme_manager.set_theme(theme_name)
             
     def _on_upload_avatar(self):
-        """上传头像"""
+        """上传悬浮球头像"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "选择头像图片",
@@ -850,10 +1089,62 @@ class SettingsWindow(QWidget):
                 self._avatar_path = file_path
             
     def _on_reset_avatar(self):
-        """重置头像"""
+        """重置悬浮球头像"""
         self._avatar_preview.clear()
         self._avatar_preview.setText("🤖")
         self._avatar_path = ""
+        
+    def _on_upload_user_avatar(self):
+        """上传用户头像"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择用户头像图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
+        )
+        if file_path:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                # 缩放预览为圆形
+                pixmap = pixmap.scaled(
+                    48, 48,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self._user_avatar_preview.setPixmap(pixmap)
+                self._user_avatar_path = file_path
+            
+    def _on_reset_user_avatar(self):
+        """重置用户头像"""
+        self._user_avatar_preview.clear()
+        self._user_avatar_preview.setText("👤")
+        self._user_avatar_path = ""
+        
+    def _on_upload_bot_avatar(self):
+        """上传Bot头像"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择Bot头像图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
+        )
+        if file_path:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                # 缩放预览
+                pixmap = pixmap.scaled(
+                    48, 48,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self._bot_avatar_preview.setPixmap(pixmap)
+                self._bot_avatar_path = file_path
+            
+    def _on_reset_bot_avatar(self):
+        """重置Bot头像"""
+        self._bot_avatar_preview.clear()
+        self._bot_avatar_preview.setText("🤖")
+        self._bot_avatar_path = ""
         
     @asyncSlot()
     async def _on_test_connection(self):
@@ -906,6 +1197,8 @@ class SettingsWindow(QWidget):
             'appearance': {
                 'theme': self._theme_combo.currentData(),
                 'avatar_path': getattr(self, '_avatar_path', ''),
+                'user_avatar_path': getattr(self, '_user_avatar_path', ''),
+                'bot_avatar_path': getattr(self, '_bot_avatar_path', ''),
                 'ball_size': self._ball_size.value(),
                 'breathing_enabled': self._breathing_enabled.isChecked(),
                 'auto_start': self._auto_start.isChecked(),
@@ -922,6 +1215,9 @@ class SettingsWindow(QWidget):
                 'bubble_duration': self._bubble_duration.value(),
                 'bubble_auto_hide': self._bubble_auto_hide.isChecked(),
             },
+            'voice': {
+                'auto_play_voice': self._auto_play_voice.isChecked(),
+            },
             'proactive': {
                 'enabled': self._proactive_enabled.isChecked(),
                 'check_interval': self._proactive_check_interval.value(),
@@ -934,8 +1230,62 @@ class SettingsWindow(QWidget):
             },
             'storage': {
                 'image_save_path': self._image_save_path.text().strip(),
+                'chat_history_path': self._chat_history_path.text().strip(),
             },
         }
+        
+        # 更新配置对象
+        if hasattr(self.config, 'server'):  # ClientConfig object
+            # 服务器
+            self.config.server.url = settings['server']['url']
+            self.config.server.username = settings['server']['username']
+            self.config.server.password = settings['server']['password']
+            self.config.server.enable_streaming = settings['server']['enable_streaming']
+            
+            # 外观
+            self.config.appearance.theme = settings['appearance']['theme']
+            self.config.appearance.avatar_path = settings['appearance']['avatar_path']
+            self.config.appearance.user_avatar_path = settings['appearance']['user_avatar_path']
+            self.config.appearance.bot_avatar_path = settings['appearance']['bot_avatar_path']
+            self.config.appearance.ball_size = settings['appearance']['ball_size']
+            self.config.appearance.breathing_enabled = settings['appearance']['breathing_enabled']
+            self.config.appearance.auto_start = settings['appearance']['auto_start']
+            
+            # 快捷键
+            self.config.hotkeys.global_enabled = settings['hotkeys']['global_enabled']
+            for key, value in settings['hotkeys'].items():
+                if key != 'global_enabled' and hasattr(self.config.hotkeys, key):
+                    setattr(self.config.hotkeys, key, value)
+            
+            # 交互
+            self.config.interaction.default_mode = settings['interaction']['default_mode']
+            self.config.interaction.single_click = settings['interaction']['single_click']
+            self.config.interaction.double_click = settings['interaction']['double_click']
+            self.config.interaction.bubble_duration = settings['interaction']['bubble_duration']
+            self.config.interaction.bubble_auto_hide = settings['interaction']['bubble_auto_hide']
+            
+            # 语音
+            self.config.voice.auto_play_voice = settings['voice']['auto_play_voice']
+
+            # 主动对话
+            self.config.proactive.enabled = settings['proactive']['enabled']
+            self.config.proactive.check_interval = settings['proactive']['check_interval']
+            self.config.proactive.trigger_probability = settings['proactive']['trigger_probability']
+            self.config.proactive.require_user_active = settings['proactive']['require_user_active']
+            self.config.proactive.idle_threshold = settings['proactive']['idle_threshold']
+            self.config.proactive.time_range_enabled = settings['proactive']['time_range_enabled']
+            self.config.proactive.time_range_start = settings['proactive']['time_range_start']
+            self.config.proactive.time_range_end = settings['proactive']['time_range_end']
+            
+            # 存储
+            self.config.storage.image_save_path = settings['storage']['image_save_path']
+            self.config.storage.chat_history_path = settings['storage']['chat_history_path']
+            
+            # 保存到磁盘
+            if hasattr(self.config, 'save'):
+                self.config.save()
+            else:
+                save_config(self.config)
         
         # 应用快捷键配置
         hotkey_config = HotkeyConfig.from_dict(settings['hotkeys'])

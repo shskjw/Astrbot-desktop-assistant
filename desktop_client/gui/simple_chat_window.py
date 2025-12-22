@@ -6,15 +6,16 @@
 - 消息气泡
 - 动画效果
 - 输入框快捷键
+- 聊天记录持久化和跨窗口同步
 """
 
 import os
 import time
 import base64
 from datetime import datetime
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Set
 
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve, QUrl
 from PySide6.QtGui import QFont, QColor, QPixmap, QPainter, QBrush, QPen, QPainterPath, QIcon, QTextDocument
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -22,12 +23,474 @@ from PySide6.QtWidgets import (
     QSizePolicy, QGraphicsDropShadowEffect, QFileDialog,
     QTextBrowser, QSpacerItem, QMenu, QDialog,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QApplication
+    QApplication, QSlider
 )
 from PySide6.QtGui import QDesktopServices
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .themes import theme_manager, Theme
 from .markdown_utils import MarkdownUtils
+from ..services import get_chat_history_manager, ChatMessage
+
+
+def format_file_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+
+def format_duration(seconds: float) -> str:
+    """格式化时长"""
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}:{secs:02d}"
+
+
+class VoiceMessageWidget(QFrame):
+    """语音消息组件 - 内置音频播放器"""
+    
+    play_requested = Signal(str)  # 发送音频路径（保留兼容性）
+    
+    def __init__(self, audio_path: str, duration: float = 0, parent=None):
+        super().__init__(parent)
+        self._audio_path = audio_path
+        self._duration = duration  # 预设时长（秒）
+        self._is_playing = False
+        self._is_seeking = False  # 是否正在拖动进度条
+        
+        self.setObjectName("voiceMessage")
+        
+        # 初始化媒体播放器
+        self._player = QMediaPlayer(self)
+        self._audio_output = QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_output)
+        self._audio_output.setVolume(1.0)
+        
+        # 连接播放器信号
+        self._player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self._player.positionChanged.connect(self._on_position_changed)
+        self._player.durationChanged.connect(self._on_duration_changed)
+        self._player.errorOccurred.connect(self._on_error)
+        
+        # 加载音频文件
+        if audio_path and os.path.exists(audio_path):
+            self._player.setSource(QUrl.fromLocalFile(audio_path))
+        
+        # 布局
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+        
+        # 播放/暂停按钮
+        self._play_btn = QPushButton("▶")
+        self._play_btn.setObjectName("voicePlayBtn")
+        self._play_btn.setFixedSize(36, 36)
+        self._play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._play_btn.clicked.connect(self._toggle_play)
+        layout.addWidget(self._play_btn)
+        
+        # 进度条
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setObjectName("voiceSlider")
+        self._slider.setMinimum(0)
+        self._slider.setMaximum(1000)  # 使用1000作为精度
+        self._slider.setValue(0)
+        self._slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._slider.sliderPressed.connect(self._on_slider_pressed)
+        self._slider.sliderReleased.connect(self._on_slider_released)
+        self._slider.sliderMoved.connect(self._on_slider_moved)
+        layout.addWidget(self._slider, 1)
+        
+        # 时间显示标签
+        self._time_label = QLabel("0:00 / 0:00")
+        self._time_label.setObjectName("voiceTimeLabel")
+        self._time_label.setMinimumWidth(80)
+        layout.addWidget(self._time_label)
+        
+        # 如果有预设时长，显示它
+        if duration > 0:
+            self._update_time_display(0, int(duration * 1000))
+        
+        self._apply_theme()
+        theme_manager.register_callback(self._on_theme_changed)
+        
+    def _on_theme_changed(self, theme: Theme):
+        self._apply_theme()
+        
+    def _apply_theme(self):
+        t = theme_manager.current_theme
+        c = t.colors
+        
+        self.setStyleSheet(f"""
+            QFrame#voiceMessage {{
+                background-color: {c.bg_secondary};
+                border: 1px solid {c.border_light};
+                border-radius: 12px;
+                min-width: 220px;
+            }}
+            QFrame#voiceMessage:hover {{
+                background-color: {c.bg_hover};
+            }}
+            QPushButton#voicePlayBtn {{
+                background-color: {c.primary};
+                color: white;
+                border: none;
+                border-radius: 18px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton#voicePlayBtn:hover {{
+                background-color: {c.primary_dark};
+            }}
+            QPushButton#voicePlayBtn:pressed {{
+                background-color: {c.primary_dark};
+            }}
+            QSlider#voiceSlider {{
+                height: 20px;
+            }}
+            QSlider#voiceSlider::groove:horizontal {{
+                border: none;
+                height: 4px;
+                background: {c.border_light};
+                border-radius: 2px;
+            }}
+            QSlider#voiceSlider::handle:horizontal {{
+                background: {c.primary};
+                border: none;
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }}
+            QSlider#voiceSlider::handle:horizontal:hover {{
+                background: {c.primary_dark};
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }}
+            QSlider#voiceSlider::sub-page:horizontal {{
+                background: {c.primary};
+                border-radius: 2px;
+            }}
+            QLabel#voiceTimeLabel {{
+                color: {c.text_secondary};
+                font-size: {t.font_size_small}px;
+                background: transparent;
+            }}
+        """)
+    
+    def _toggle_play(self):
+        """切换播放/暂停状态"""
+        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._player.pause()
+        else:
+            self._player.play()
+    
+    def _on_playback_state_changed(self, state):
+        """播放状态变化"""
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self._is_playing = True
+            self._play_btn.setText("⏸")
+        elif state == QMediaPlayer.PlaybackState.PausedState:
+            self._is_playing = False
+            self._play_btn.setText("▶")
+        elif state == QMediaPlayer.PlaybackState.StoppedState:
+            self._is_playing = False
+            self._play_btn.setText("▶")
+            # 播放完成后重置进度
+            self._slider.setValue(0)
+            self._update_time_display(0, self._player.duration())
+    
+    def _on_position_changed(self, position: int):
+        """播放位置变化"""
+        if not self._is_seeking:
+            duration = self._player.duration()
+            if duration > 0:
+                slider_value = int((position / duration) * 1000)
+                self._slider.setValue(slider_value)
+            self._update_time_display(position, duration)
+    
+    def _on_duration_changed(self, duration: int):
+        """音频时长变化"""
+        self._update_time_display(self._player.position(), duration)
+    
+    def _on_error(self, error, error_string):
+        """播放错误"""
+        print(f"音频播放错误: {error_string}")
+    
+    def _on_slider_pressed(self):
+        """滑块按下"""
+        self._is_seeking = True
+    
+    def _on_slider_released(self):
+        """滑块释放"""
+        self._is_seeking = False
+        duration = self._player.duration()
+        if duration > 0:
+            position = int((self._slider.value() / 1000) * duration)
+            self._player.setPosition(position)
+    
+    def _on_slider_moved(self, value: int):
+        """滑块移动"""
+        duration = self._player.duration()
+        if duration > 0:
+            position = int((value / 1000) * duration)
+            self._update_time_display(position, duration)
+    
+    def _update_time_display(self, position: int, duration: int):
+        """更新时间显示"""
+        pos_str = format_duration(position / 1000) if position >= 0 else "0:00"
+        dur_str = format_duration(duration / 1000) if duration > 0 else "0:00"
+        self._time_label.setText(f"{pos_str} / {dur_str}")
+    
+    def set_playing(self, playing: bool):
+        """设置播放状态"""
+        if playing:
+            self._player.play()
+        else:
+            self._player.pause()
+    
+    def stop(self):
+        """停止播放"""
+        self._player.stop()
+    
+    def cleanup(self):
+        """清理资源"""
+        self._player.stop()
+        self._player.setSource(QUrl())
+
+
+class VideoMessageWidget(QFrame):
+    """视频消息组件"""
+    
+    play_requested = Signal(str)  # 发送视频路径
+    
+    def __init__(self, video_path: str, thumbnail_path: str = "", duration: float = 0, parent=None):
+        super().__init__(parent)
+        self._video_path = video_path
+        self._thumbnail_path = thumbnail_path
+        self._duration = duration
+        
+        self.setObjectName("videoMessage")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # 缩略图容器
+        self._thumbnail_container = QWidget()
+        self._thumbnail_container.setFixedSize(200, 150)
+        thumb_layout = QVBoxLayout(self._thumbnail_container)
+        thumb_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 缩略图
+        self._thumbnail_label = QLabel()
+        self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumbnail_label.setFixedSize(200, 150)
+        
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            pixmap = QPixmap(thumbnail_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(200, 150, Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                self._thumbnail_label.setPixmap(scaled)
+        else:
+            self._thumbnail_label.setText("🎬")
+            self._thumbnail_label.setStyleSheet("font-size: 48px; background: #333;")
+            
+        thumb_layout.addWidget(self._thumbnail_label)
+        layout.addWidget(self._thumbnail_container)
+        
+        # 播放按钮覆盖层
+        self._play_overlay = QLabel("▶")
+        self._play_overlay.setObjectName("videoPlayOverlay")
+        self._play_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._play_overlay.setFixedSize(50, 50)
+        # 将播放按钮居中放置在缩略图上
+        self._play_overlay.setParent(self._thumbnail_container)
+        self._play_overlay.move(75, 50)
+        
+        # 时长标签
+        if duration > 0:
+            self._duration_label = QLabel(format_duration(duration))
+            self._duration_label.setObjectName("videoDuration")
+            self._duration_label.setParent(self._thumbnail_container)
+            self._duration_label.move(160, 130)
+            
+        self._apply_theme()
+        theme_manager.register_callback(self._on_theme_changed)
+        
+    def _on_theme_changed(self, theme: Theme):
+        self._apply_theme()
+        
+    def _apply_theme(self):
+        t = theme_manager.current_theme
+        c = t.colors
+        
+        self.setStyleSheet(f"""
+            QFrame#videoMessage {{
+                background-color: {c.bg_tertiary};
+                border: 1px solid {c.border_light};
+                border-radius: 8px;
+            }}
+            QLabel#videoPlayOverlay {{
+                background-color: rgba(0, 0, 0, 0.6);
+                color: white;
+                border-radius: 25px;
+                font-size: 24px;
+            }}
+            QLabel#videoDuration {{
+                background-color: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: {t.font_size_small}px;
+            }}
+        """)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.play_requested.emit(self._video_path)
+        super().mousePressEvent(event)
+
+
+class FileMessageWidget(QFrame):
+    """文件消息组件"""
+    
+    open_requested = Signal(str)  # 发送文件路径
+    download_requested = Signal(str)  # 发送文件路径
+    
+    def __init__(self, file_path: str, file_name: str = "", file_size: int = 0, parent=None):
+        super().__init__(parent)
+        self._file_path = file_path
+        self._file_name = file_name or os.path.basename(file_path)
+        self._file_size = file_size
+        
+        self.setObjectName("fileMessage")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+        
+        # 文件图标
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(40, 40)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 根据文件扩展名选择图标
+        ext = os.path.splitext(self._file_name)[1].lower()
+        if ext in ['.pdf']:
+            icon_text = "📄"
+        elif ext in ['.doc', '.docx']:
+            icon_text = "📝"
+        elif ext in ['.xls', '.xlsx']:
+            icon_text = "📊"
+        elif ext in ['.ppt', '.pptx']:
+            icon_text = "📽️"
+        elif ext in ['.zip', '.rar', '.7z', '.tar', '.gz']:
+            icon_text = "🗜️"
+        elif ext in ['.txt', '.md', '.json', '.xml']:
+            icon_text = "📃"
+        elif ext in ['.py', '.js', '.ts', '.java', '.c', '.cpp', '.h']:
+            icon_text = "💻"
+        else:
+            icon_text = "📁"
+            
+        self._icon_label.setText(icon_text)
+        layout.addWidget(self._icon_label)
+        
+        # 文件信息
+        info_layout = QVBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+        
+        self._name_label = QLabel(self._file_name)
+        self._name_label.setObjectName("fileName")
+        self._name_label.setWordWrap(True)
+        self._name_label.setMaximumWidth(200)
+        info_layout.addWidget(self._name_label)
+        
+        if file_size > 0:
+            self._size_label = QLabel(format_file_size(file_size))
+            self._size_label.setObjectName("fileSize")
+            info_layout.addWidget(self._size_label)
+            
+        layout.addLayout(info_layout)
+        layout.addStretch()
+        
+        # 下载/打开按钮
+        self._action_btn = QPushButton("📥")
+        self._action_btn.setObjectName("fileActionBtn")
+        self._action_btn.setFixedSize(32, 32)
+        self._action_btn.setToolTip("打开文件")
+        self._action_btn.clicked.connect(self._on_action_clicked)
+        layout.addWidget(self._action_btn)
+        
+        self._apply_theme()
+        theme_manager.register_callback(self._on_theme_changed)
+        
+    def _on_theme_changed(self, theme: Theme):
+        self._apply_theme()
+        
+    def _apply_theme(self):
+        t = theme_manager.current_theme
+        c = t.colors
+        
+        self.setStyleSheet(f"""
+            QFrame#fileMessage {{
+                background-color: {c.bg_secondary};
+                border: 1px solid {c.border_light};
+                border-radius: 8px;
+            }}
+            QFrame#fileMessage:hover {{
+                background-color: {c.bg_hover};
+                border-color: {c.primary};
+            }}
+            QLabel {{
+                background: transparent;
+            }}
+            QLabel#fileName {{
+                color: {c.text_primary};
+                font-size: {t.font_size_base}px;
+                font-weight: bold;
+            }}
+            QLabel#fileSize {{
+                color: {c.text_secondary};
+                font-size: {t.font_size_small}px;
+            }}
+            QPushButton#fileActionBtn {{
+                background-color: {c.primary};
+                color: white;
+                border: none;
+                border-radius: 16px;
+                font-size: 14px;
+            }}
+            QPushButton#fileActionBtn:hover {{
+                background-color: {c.primary_dark};
+            }}
+        """)
+        # 设置图标字体大小
+        self._icon_label.setStyleSheet("font-size: 28px; background: transparent;")
+        
+    def _on_action_clicked(self):
+        if os.path.exists(self._file_path):
+            self.open_requested.emit(self._file_path)
+        else:
+            self.download_requested.emit(self._file_path)
+            
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_action_clicked()
+        super().mousePressEvent(event)
 
 
 class ClickableImageLabel(QLabel):
@@ -367,15 +830,19 @@ class ChatTextBrowser(QTextBrowser):
 class MessageBubble(QFrame):
     """美化版消息气泡"""
     
-    def __init__(self, role: str, content: str, msg_type: str = "text", parent=None):
+    def __init__(self, role: str, content: str, msg_type: str = "text", avatar_path: str = "", parent=None):
         super().__init__(parent)
         self.role = role
         self.msg_type = msg_type
+        self._avatar_path = avatar_path  # 自定义头像路径
+        self._avatar_pixmap: Optional[QPixmap] = None  # 缓存头像图片
+        self._adjusting = False  # 防止 _adjust_size 重入
+        self._last_height = 0  # 记录上次设置的高度
         
         self.setObjectName("messageBubble")
         
-        # 设置大小策略 - 使用 Preferred 而非 Expanding
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        # 设置大小策略 - 使用 Expanding 确保填充整个宽度
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         
         # 主布局
         self._main_layout = QHBoxLayout(self)
@@ -385,12 +852,16 @@ class MessageBubble(QFrame):
         # 头像
         self._avatar_label = QLabel()
         self._avatar_label.setFixedSize(36, 36)
-        self._avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignTop)
+        self._avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 加载自定义头像
+        if avatar_path and os.path.exists(avatar_path):
+            self._load_avatar(avatar_path)
         
         # 内容区域
         self._content_frame = QFrame()
         self._content_frame.setObjectName("bubbleContent")
-        self._content_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self._content_frame.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
         content_layout = QVBoxLayout(self._content_frame)
         content_layout.setContentsMargins(12, 10, 12, 8)
         content_layout.setSpacing(4)
@@ -408,19 +879,50 @@ class MessageBubble(QFrame):
             self._load_image(content)
             self._content_widget.clicked.connect(self._show_image_preview)
             content_layout.addWidget(self._content_widget)
+        elif msg_type == "voice":
+            # 语音消息：content 格式为 "path|duration" 或仅 "path"
+            parts = content.split("|")
+            audio_path = parts[0]
+            duration = float(parts[1]) if len(parts) > 1 else 0
+            self._content_widget = VoiceMessageWidget(audio_path, duration)
+            self._content_widget.play_requested.connect(self._on_voice_play)
+            content_layout.addWidget(self._content_widget)
+        elif msg_type == "video":
+            # 视频消息：content 格式为 "path|thumbnail|duration" 或仅 "path"
+            parts = content.split("|")
+            video_path = parts[0]
+            thumbnail = parts[1] if len(parts) > 1 else ""
+            duration = float(parts[2]) if len(parts) > 2 else 0
+            self._content_widget = VideoMessageWidget(video_path, thumbnail, duration)
+            self._content_widget.play_requested.connect(self._on_video_play)
+            content_layout.addWidget(self._content_widget)
+        elif msg_type == "file":
+            # 文件消息：content 格式为 "path|name|size" 或仅 "path"
+            parts = content.split("|")
+            file_path = parts[0]
+            file_name = parts[1] if len(parts) > 1 else ""
+            file_size = int(parts[2]) if len(parts) > 2 else 0
+            self._content_widget = FileMessageWidget(file_path, file_name, file_size)
+            self._content_widget.open_requested.connect(self._on_file_open)
+            self._content_widget.download_requested.connect(self._on_file_download)
+            content_layout.addWidget(self._content_widget)
         else:
             self._content_widget = ChatTextBrowser()
             self._content_widget.setObjectName("textContent")
             self._content_widget.setOpenExternalLinks(False)
             self._content_widget.setReadOnly(True)
+            # 完全禁用滚动条
             self._content_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._content_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._content_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+            # 禁用框架以避免额外空间
+            self._content_widget.setFrameShape(QFrame.Shape.NoFrame)
+            self._content_widget.setFrameShadow(QFrame.Shadow.Plain)
+            self._content_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             self._content_widget.setMinimumHeight(20)
             self._content_widget.anchorClicked.connect(self._on_link_clicked)
             self._content_widget.image_clicked.connect(self._on_image_clicked)
             self._update_markdown()
-            self._content_widget.document().contentsChanged.connect(self._adjust_size)
+            self._content_widget.document().contentsChanged.connect(self._schedule_adjust_size)
             content_layout.addWidget(self._content_widget)
         
         # 时间标签
@@ -428,28 +930,65 @@ class MessageBubble(QFrame):
         self._time_label.setObjectName("timeLabel")
         content_layout.addWidget(self._time_label)
         
-        # 根据角色布局 - 简化布局逻辑
+        # 根据角色布局 - 确保正确的两端对齐
         if role == "user":
             # 用户消息：右对齐 (弹性空间 + 内容 + 头像)
-            self._main_layout.addStretch(1)
+            # spacer 会尽可能扩展，将内容和头像推到右边
+            spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            self._main_layout.addItem(spacer)
             self._main_layout.addWidget(self._content_frame)
             self._main_layout.addWidget(self._avatar_label, 0, Qt.AlignmentFlag.AlignTop)
             self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
             # AI 消息：左对齐 (头像 + 内容 + 弹性空间)
+            # 头像和内容在左边，spacer 填充右边空间
             self._main_layout.addWidget(self._avatar_label, 0, Qt.AlignmentFlag.AlignTop)
             self._main_layout.addWidget(self._content_frame)
-            self._main_layout.addStretch(1)
+            spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            self._main_layout.addItem(spacer)
             self._time_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
-        # 设置内容宽度限制
+        # 设置内容宽度限制 - 气泡根据内容自适应，最大380px
         self._content_frame.setMaximumWidth(380)
-        self._content_frame.setMinimumWidth(80)
+        self._content_frame.setMinimumWidth(60)
         
         self._apply_theme()
         theme_manager.register_callback(self._on_theme_changed)
         
     def _on_theme_changed(self, theme: Theme):
+        self._apply_theme()
+    
+    def _load_avatar(self, avatar_path: str):
+        """加载自定义头像图片"""
+        if avatar_path and os.path.exists(avatar_path):
+            pixmap = QPixmap(avatar_path)
+            if not pixmap.isNull():
+                # 缩放并裁剪为圆形
+                size = 36
+                # 先缩放到合适大小
+                scaled = pixmap.scaled(
+                    size, size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                # 裁剪为正方形
+                if scaled.width() != scaled.height():
+                    x = (scaled.width() - size) // 2
+                    y = (scaled.height() - size) // 2
+                    scaled = scaled.copy(x, y, size, size)
+                self._avatar_pixmap = scaled
+                return True
+        
+        # 如果路径无效或加载失败，清除缓存的 pixmap
+        self._avatar_pixmap = None
+        return False
+    
+    def set_avatar(self, avatar_path: str):
+        """设置自定义头像"""
+        self._avatar_path = avatar_path
+        # 尝试加载头像，如果路径为空或加载失败，_load_avatar 返回 False
+        # 但我们仍然需要调用 _apply_theme 来重置为默认头像（如果路径被清除）
+        self._load_avatar(avatar_path)
         self._apply_theme()
         
     def _apply_theme(self):
@@ -467,16 +1006,46 @@ class MessageBubble(QFrame):
             bubble_text = c.bubble_ai_text
             avatar_bg = c.bg_tertiary
         
-        # 头像样式
-        self._avatar_label.setText(avatar_text)
-        self._avatar_label.setStyleSheet(f"""
-            QLabel {{
-                background-color: {avatar_bg};
-                border-radius: 18px;
-                font-size: 18px;
-                border: none;
-            }}
-        """)
+        # 头像样式 - 支持自定义图片
+        if self._avatar_pixmap and not self._avatar_pixmap.isNull():
+            # 使用自定义头像（用户和AI消息都可以使用自定义头像）
+            # 创建圆形遮罩
+            rounded_pixmap = QPixmap(36, 36)
+            rounded_pixmap.fill(Qt.GlobalColor.transparent)
+            
+            painter = QPainter(rounded_pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
+            # 绘制圆形裁剪路径
+            path = QPainterPath()
+            path.addEllipse(0, 0, 36, 36)
+            painter.setClipPath(path)
+            
+            # 绘制头像
+            painter.drawPixmap(0, 0, self._avatar_pixmap)
+            painter.end()
+            
+            self._avatar_label.setPixmap(rounded_pixmap)
+            self._avatar_label.setText("")
+            self._avatar_label.setStyleSheet(f"""
+                QLabel {{
+                    background-color: transparent;
+                    border-radius: 18px;
+                    border: none;
+                }}
+            """)
+        else:
+            # 使用emoji头像
+            self._avatar_label.setPixmap(QPixmap())  # 清除图片
+            self._avatar_label.setText(avatar_text)
+            self._avatar_label.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {avatar_bg};
+                    border-radius: 18px;
+                    font-size: 18px;
+                    border: none;
+                }}
+            """)
         
         # 气泡样式 - 根据角色使用不同的圆角
         if self.role == "user":
@@ -504,6 +1073,8 @@ class MessageBubble(QFrame):
                 QTextBrowser {{
                     background: transparent;
                     border: none;
+                    margin: 0;
+                    padding: 0;
                     color: {bubble_text};
                     font-family: {t.font_family};
                     font-size: {t.font_size_base}px;
@@ -565,6 +1136,11 @@ class MessageBubble(QFrame):
         if isinstance(self._content_widget, ClickableImageLabel):
             self._content_widget._show_preview()
             
+    def play_voice(self):
+        """播放语音消息"""
+        if self.msg_type == "voice" and isinstance(self._content_widget, VoiceMessageWidget):
+            self._content_widget.set_playing(True)
+
     def update_content(self, content: str):
         if self.msg_type == "text":
             self._raw_content = content
@@ -584,35 +1160,88 @@ class MessageBubble(QFrame):
         if self.msg_type == "text":
             html = MarkdownUtils.render(self._raw_content, self.role)
             self._content_widget.setHtml(html)
+            # 在设置 HTML 后延迟调整大小
+            QTimer.singleShot(20, self._adjust_size)
+            
+    def _schedule_adjust_size(self):
+        """延迟调整大小，确保内容完全渲染"""
+        if self.msg_type == "text" and not self._adjusting:
+            # 使用短延迟确保 HTML 内容完全渲染
+            QTimer.singleShot(10, self._adjust_size)
             
     def _adjust_size(self):
-        if self.msg_type == "text":
+        if self.msg_type != "text":
+            return
+            
+        # 防止重入
+        if self._adjusting:
+            return
+        self._adjusting = True
+        
+        try:
             doc = self._content_widget.document()
+            
             # 使用固定的内容宽度以确保一致性
-            available_width = 320  # 气泡最大宽度 380 - padding 60
+            # 气泡最大宽度 380 - 左右padding(12+12=24) = 356
+            available_width = 356
             doc.setTextWidth(available_width)
             
-            # 强制重新布局文档
+            # 强制文档重新布局
             doc.adjustSize()
             
-            # 获取文档实际高度
-            doc_height = doc.size().height()
+            # 获取文档实际高度 - 使用多种方法确保准确性
+            doc_height = 0
             
-            # 确保有足够高度显示所有内容，包括图片
-            # 使用更大的余量来确保图片完全显示
-            new_height = max(24, int(doc_height + 20))
+            # 方法1: 使用 documentLayout
+            layout = doc.documentLayout()
+            if layout:
+                doc_size = layout.documentSize()
+                doc_height = doc_size.height()
             
-            self._content_widget.setMinimumHeight(new_height)
-            self._content_widget.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
-            self._content_widget.setFixedHeight(new_height)
-            self._content_frame.adjustSize()
-            self.adjustSize()
-            self.updateGeometry()
+            # 方法2: 使用 document().size()
+            if doc_height <= 0:
+                doc_height = doc.size().height()
+            
+            # 方法3: 使用 idealWidth 计算的高度
+            if doc_height <= 0:
+                doc.setTextWidth(-1)  # 让文档自动计算宽度
+                ideal_width = doc.idealWidth()
+                doc.setTextWidth(min(ideal_width, available_width))
+                doc_height = doc.size().height()
+            
+            # 确保最小高度
+            if doc_height <= 0:
+                doc_height = 24
+            
+            # 使用精确高度，不添加额外余量（因为 QTextBrowser 已包含内部边距）
+            # 只添加少量余量以防止文本被截断
+            # 增加余量以避免出现滚动条
+            new_height = max(24, int(doc_height) + 12)
+            
+            # 只有当高度发生变化时才更新，避免无限循环
+            if new_height != self._last_height:
+                self._last_height = new_height
+                
+                # 阻止信号以避免触发更多的调整
+                self._content_widget.blockSignals(True)
+                self._content_widget.setFixedHeight(new_height)
+                self._content_widget.blockSignals(False)
+                
+                # 更新内容框架和气泡大小
+                self._content_frame.adjustSize()
+                self.adjustSize()
+                self.updateGeometry()
+                
+                # 通知父容器重新布局
+                if self.parent():
+                    self.parent().updateGeometry()
+        finally:
+            self._adjusting = False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.msg_type == "text":
-            self._adjust_size()
+        # 移除 resizeEvent 中的调整逻辑，避免循环
+        # _adjust_size 已经在内容变化时被调用
 
     def _on_image_clicked(self, image_url: str):
         """处理图片点击事件"""
@@ -655,6 +1284,37 @@ class MessageBubble(QFrame):
         except Exception as e:
             print(f"Error showing image preview: {e}")
     
+    def _on_voice_play(self, audio_path: str):
+        """处理语音播放请求"""
+        try:
+            # 使用系统默认程序打开音频文件
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(audio_path))
+        except Exception as e:
+            print(f"播放语音失败: {e}")
+            
+    def _on_video_play(self, video_path: str):
+        """处理视频播放请求"""
+        try:
+            # 使用系统默认程序打开视频文件
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(video_path))
+        except Exception as e:
+            print(f"播放视频失败: {e}")
+            
+    def _on_file_open(self, file_path: str):
+        """处理文件打开请求"""
+        try:
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+        except Exception as e:
+            print(f"打开文件失败: {e}")
+            
+    def _on_file_download(self, file_path: str):
+        """处理文件下载请求"""
+        # 如果文件不存在，可以触发下载逻辑
+        print(f"文件不存在，需要下载: {file_path}")
+            
     def _on_link_clicked(self, url):
         url_str = url.toString()
         # 检查是否是图片链接
@@ -908,11 +1568,42 @@ class SimpleChatWindow(QWidget):
     closed = Signal()
     screenshot_requested = Signal(str)
     
-    def __init__(self, api_client=None, parent=None):
+    def __init__(self, api_client=None, config=None, parent=None):
         super().__init__(parent)
         self.api_client = api_client
+        self._config = config
+        self._user_avatar_path = ""  # 用户头像路径
+        self._bot_avatar_path = ""   # Bot头像路径
         self._messages: List[MessageBubble] = []
         self._current_ai_bubble: Optional[MessageBubble] = None
+        self._current_ai_message_id: str = ""  # 当前流式响应的消息ID
+        
+        # 已显示消息ID集合，用于避免重复显示
+        self._displayed_message_ids: Set[str] = set()
+        
+        # 聊天记录管理器
+        self._chat_history = get_chat_history_manager()
+        
+        # 从配置中加载头像路径
+        if config:
+            if hasattr(config, 'appearance'):
+                appearance = getattr(config, 'appearance')
+                # 加载用户头像
+                if hasattr(appearance, 'user_avatar_path'):
+                    self._user_avatar_path = appearance.user_avatar_path or ""
+                elif isinstance(appearance, dict) and 'user_avatar_path' in appearance:
+                    self._user_avatar_path = appearance.get('user_avatar_path', '') or ""
+                # 加载Bot头像
+                if hasattr(appearance, 'bot_avatar_path'):
+                    self._bot_avatar_path = appearance.bot_avatar_path or ""
+                elif isinstance(appearance, dict) and 'bot_avatar_path' in appearance:
+                    self._bot_avatar_path = appearance.get('bot_avatar_path', '') or ""
+                # 如果bot_avatar_path为空，尝试使用旧的avatar_path作为后备
+                if not self._bot_avatar_path:
+                    if hasattr(appearance, 'avatar_path'):
+                        self._bot_avatar_path = appearance.avatar_path or ""
+                    elif isinstance(appearance, dict) and 'avatar_path' in appearance:
+                        self._bot_avatar_path = appearance.get('avatar_path', '') or ""
         
         self.setWindowTitle("AstrBot 对话")
         self.setMinimumSize(500, 650)
@@ -927,6 +1618,15 @@ class SimpleChatWindow(QWidget):
         self._init_ui()
         self._apply_theme()
         theme_manager.register_callback(self._on_theme_changed)
+        
+        # 连接聊天记录管理器的信号
+        self._chat_history.message_added.connect(self._on_history_message_added)
+        self._chat_history.message_updated.connect(self._on_history_message_updated)
+        self._chat_history.messages_cleared.connect(self._on_history_cleared)
+        self._chat_history.history_loaded.connect(self._on_history_loaded)
+        
+        # 加载历史记录
+        self._load_history()
         
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -943,6 +1643,7 @@ class SimpleChatWindow(QWidget):
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
         self._message_container = QWidget()
+        self._message_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._message_layout = QVBoxLayout(self._message_container)
         self._message_layout.setContentsMargins(16, 16, 16, 16)
         self._message_layout.setSpacing(12)
@@ -1104,6 +1805,91 @@ class SimpleChatWindow(QWidget):
             }}
         """)
         
+    def _load_history(self):
+        """加载聊天历史记录"""
+        # 尝试从文件加载
+        self._chat_history.load_from_file()
+        
+        # 显示已有的消息
+        messages = self._chat_history.get_messages()
+        for msg in messages:
+            self._display_message_from_history(msg)
+    
+    def _display_message_from_history(self, msg: ChatMessage):
+        """从历史记录中显示消息（不会再次添加到历史记录）"""
+        if msg.id in self._displayed_message_ids:
+            return  # 已经显示过了
+        
+        self._displayed_message_ids.add(msg.id)
+        
+        # 根据消息类型创建气泡
+        avatar_path = self._user_avatar_path if msg.role == "user" else self._bot_avatar_path
+        bubble = MessageBubble(msg.role, msg.content, msg.msg_type, avatar_path=avatar_path)
+        bubble.message_id = msg.id
+        
+        self._message_layout.insertWidget(self._message_layout.count() - 1, bubble)
+        self._messages.append(bubble)
+    
+    def _on_history_message_added(self, msg: ChatMessage):
+        """处理历史记录管理器发出的消息添加信号"""
+        # 如果消息已经显示过，忽略
+        if msg.id in self._displayed_message_ids:
+            return
+        
+        # 显示消息
+        self._display_message_from_history(msg)
+        self._scroll_to_bottom()
+        
+        # 检查是否需要自动播放语音
+        if msg.role == "assistant" and msg.msg_type == "voice":
+            should_play = False
+            if self._config:
+                if hasattr(self._config, 'voice') and hasattr(self._config.voice, 'auto_play_voice'):
+                     should_play = self._config.voice.auto_play_voice
+                elif isinstance(self._config, dict):
+                     if 'voice' in self._config:
+                         should_play = self._config['voice'].get('auto_play_voice', False)
+                     else:
+                         should_play = self._config.get('auto_play_voice', False)
+
+            if should_play and self._messages:
+                last_bubble = self._messages[-1]
+                # 再次确认 ID 匹配，防止意外播放了错误的消息
+                if getattr(last_bubble, 'message_id', None) == msg.id:
+                     last_bubble.play_voice()
+    
+    def _on_history_message_updated(self, message_id: str, new_content: str):
+        """处理历史记录管理器发出的消息更新信号"""
+        # 如果是当前正在流式响应的消息，更新气泡内容
+        if message_id == self._current_ai_message_id and self._current_ai_bubble:
+            self._current_ai_bubble.update_content(new_content)
+            self._scroll_to_bottom()
+    
+    def _on_history_cleared(self):
+        """处理历史记录清除信号"""
+        # 清空所有显示的消息
+        for bubble in self._messages:
+            bubble.deleteLater()
+        self._messages.clear()
+        self._displayed_message_ids.clear()
+        self._current_ai_bubble = None
+        self._current_ai_message_id = ""
+    
+    def _on_history_loaded(self):
+        """处理历史记录加载完成信号"""
+        # 清空当前显示
+        for bubble in self._messages:
+            bubble.deleteLater()
+        self._messages.clear()
+        self._displayed_message_ids.clear()
+        
+        # 重新加载显示
+        messages = self._chat_history.get_messages()
+        for msg in messages:
+            self._display_message_from_history(msg)
+        
+        self._scroll_to_bottom()
+        
     def _on_send_message(self, text: str):
         self.add_user_message(text)
         self.message_sent.emit(text)
@@ -1112,38 +1898,100 @@ class SimpleChatWindow(QWidget):
         self.screenshot_requested.emit("chat")
         
     def _clear_messages(self):
+        """清空所有消息（同时清空历史记录）"""
+        self._chat_history.clear_history()
+        # 清空操作会通过信号触发 _on_history_cleared
+        
+    def set_user_avatar(self, avatar_path: str):
+        """设置用户头像路径并刷新显示"""
+        self._user_avatar_path = avatar_path
+        self._refresh_avatars("user")
+        
+    def set_bot_avatar(self, avatar_path: str):
+        """设置Bot头像路径并刷新显示"""
+        self._bot_avatar_path = avatar_path
+        self._refresh_avatars("assistant")
+        
+    def set_ai_avatar(self, avatar_path: str):
+        """设置AI头像路径（兼容旧接口）"""
+        self.set_bot_avatar(avatar_path)
+
+    def _refresh_avatars(self, role: str):
+        """刷新指定角色的头像"""
+        avatar_path = self._user_avatar_path if role == "user" else self._bot_avatar_path
         for bubble in self._messages:
-            bubble.deleteLater()
-        self._messages.clear()
-        self._current_ai_bubble = None
+            if bubble.role == role:
+                bubble.set_avatar(avatar_path)
         
     def add_user_message(self, content: str, msg_type: str = "text"):
-        bubble = MessageBubble("user", content, msg_type)
-        self._message_layout.insertWidget(self._message_layout.count() - 1, bubble)
-        self._messages.append(bubble)
-        self._scroll_to_bottom()
+        """添加用户消息（通过历史记录管理器）"""
+        # 通过历史记录管理器添加，会触发信号自动显示
+        self._chat_history.add_message(
+            role="user",
+            content=content,
+            msg_type=msg_type
+        )
         
     def add_ai_message(self, content: str, msg_type: str = "text"):
-        """添加 AI 消息（完整消息）"""
-        bubble = MessageBubble("assistant", content, msg_type)
-        self._message_layout.insertWidget(self._message_layout.count() - 1, bubble)
-        self._messages.append(bubble)
-        self._current_ai_bubble = bubble
-        self._scroll_to_bottom()
+        """添加 AI 消息（完整消息，通过历史记录管理器）
+        
+        如果当前有未完成的流式响应，会先完成它再添加新消息。
+        这可以避免消息重复的问题。
+        """
+        # 如果有正在进行的流式响应，更新它而不是创建新消息
+        if self._current_ai_message_id and self._current_ai_bubble:
+            # 更新现有消息
+            self._chat_history.update_message(self._current_ai_message_id, content)
+            self._current_ai_bubble.update_content(content)
+            self.finish_ai_response()
+            self._scroll_to_bottom()
+            return
+        
+        # 没有进行中的流式响应，正常添加新消息
+        # 依赖 message_added 信号更新 UI，避免重复添加
+        self._chat_history.add_message(
+            role="assistant",
+            content=content,
+            msg_type=msg_type
+        )
         
     def start_ai_response(self):
-        """开始 AI 响应（流式响应的开始）"""
-        bubble = MessageBubble("assistant", "")
-        self._message_layout.insertWidget(self._message_layout.count() - 1, bubble)
-        self._messages.append(bubble)
-        self._current_ai_bubble = bubble
-        self._scroll_to_bottom()
+        """开始 AI 响应（流式响应的开始）
+        
+        此方法仅设置状态，不创建占位消息。
+        实际消息将在第一次调用 update_ai_response() 时创建。
+        这可以避免显示空的 "..." 占位消息。
+        """
+        # 只设置状态，不创建消息
+        # 消息将在第一次 update_ai_response 时创建
+        self._current_ai_message_id = ""
+        self._current_ai_bubble = None
         
     def update_ai_response(self, content: str):
         """更新 AI 响应内容（流式响应）"""
-        if self._current_ai_bubble:
-            self._current_ai_bubble.update_content(content)
-            self._scroll_to_bottom()
+        # 如果还没有创建消息，先创建
+        if not self._current_ai_message_id:
+            msg = self._chat_history.add_message(
+                role="assistant",
+                content=content,
+                msg_type="text"
+            )
+            self._current_ai_message_id = msg.id
+            
+            # 查找对应的气泡
+            # 注意：add_message 会触发信号，UI 应该已经通过 _display_message_from_history 更新
+            # 我们只需要找到对应的气泡对象
+            for bubble in reversed(self._messages):
+                if getattr(bubble, 'message_id', None) == msg.id:
+                    self._current_ai_bubble = bubble
+                    break
+        else:
+            # 更新已有消息
+            self._chat_history.update_message(self._current_ai_message_id, content)
+            if self._current_ai_bubble:
+                self._current_ai_bubble.update_content(content)
+        
+        self._scroll_to_bottom()
         
     def update_ai_message(self, content: str):
         """更新 AI 消息内容（旧接口兼容）"""
@@ -1151,18 +1999,31 @@ class SimpleChatWindow(QWidget):
             
     def finish_ai_response(self):
         """完成 AI 响应"""
+        # 保存最终内容
+        if self._current_ai_message_id and self._current_ai_bubble:
+            final_content = self._current_ai_bubble._raw_content if hasattr(self._current_ai_bubble, '_raw_content') else ""
+            if final_content:
+                self._chat_history.update_message(self._current_ai_message_id, final_content)
+        
         self._current_ai_bubble = None
+        self._current_ai_message_id = ""
+        
+        # 确保保存
+        self._chat_history.save_to_file()
             
     def finish_ai_message(self):
         """完成 AI 消息（旧接口兼容）"""
         self.finish_ai_response()
         
     def add_error_message(self, content: str):
-        """添加错误消息"""
-        bubble = MessageBubble("assistant", f"❌ {content}")
-        self._message_layout.insertWidget(self._message_layout.count() - 1, bubble)
-        self._messages.append(bubble)
-        self._scroll_to_bottom()
+        """添加错误消息（通过历史记录管理器）"""
+        error_content = f"❌ {content}"
+        self._chat_history.add_message(
+            role="assistant",
+            content=error_content,
+            msg_type="text",
+            metadata={"is_error": True}
+        )
         
     def _scroll_to_bottom(self):
         QTimer.singleShot(50, lambda: self._scroll_area.verticalScrollBar().setValue(

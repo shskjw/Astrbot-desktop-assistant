@@ -172,7 +172,7 @@ class DesktopClientApp(QObject):
         # 创建对话窗口
         print("[DEBUG] 创建对话窗口...")
         from .gui.simple_chat_window import SimpleChatWindow
-        self._chat_window = SimpleChatWindow(api_client=self._bridge.api_client)
+        self._chat_window = SimpleChatWindow(api_client=self._bridge.api_client, config=self.config)
         self._chat_window.message_sent.connect(self._on_message_sent)
         self._chat_window.image_sent.connect(self._on_image_sent)
         self._chat_window.screenshot_requested.connect(self._on_screenshot)
@@ -295,6 +295,10 @@ class DesktopClientApp(QObject):
         if msg_type == "text":
             # 忽略空消息
             if not content:
+                return
+            
+            # 过滤掉语音消息的冗余文本提示
+            if content.strip() in ["[收到语音]", "🔊 [收到语音]"]:
                 return
             
             # 主动对话响应：只在气泡中显示，不添加到对话窗口历史
@@ -711,6 +715,18 @@ class DesktopClientApp(QObject):
             self.config.appearance.avatar_path = appearance['avatar_path']
             if self._floating_ball:
                 self._floating_ball.set_avatar(appearance['avatar_path'])
+        
+        # 更新对话窗口头像并保存到配置
+        if 'user_avatar_path' in appearance:
+            self.config.appearance.user_avatar_path = appearance['user_avatar_path']
+            if self._chat_window:
+                self._chat_window.set_user_avatar(appearance['user_avatar_path'])
+        
+        if 'bot_avatar_path' in appearance:
+            self.config.appearance.bot_avatar_path = appearance['bot_avatar_path']
+            if self._chat_window:
+                self._chat_window.set_bot_avatar(appearance['bot_avatar_path'])
+
         if 'ball_size' in appearance:
             self.config.appearance.ball_size = appearance['ball_size']
         if 'breathing_enabled' in appearance:
@@ -761,6 +777,10 @@ class DesktopClientApp(QObject):
             if self._proactive_service and storage['image_save_path']:
                 self._proactive_service._screenshot_dir = storage['image_save_path']
                 print(f"[DEBUG] 主动对话服务截图目录已更新")
+        
+        if 'chat_history_path' in storage:
+            self.config.storage.chat_history_path = storage['chat_history_path']
+            print(f"[DEBUG] 聊天记录保存路径已更新: {storage['chat_history_path']}")
             
         # 保存配置到文件
         print("[DEBUG] 保存配置...")
