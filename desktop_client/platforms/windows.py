@@ -115,14 +115,37 @@ class WindowsPlatformAdapter(IPlatformAdapter):
         if getattr(sys, 'frozen', False):
             return f'"{sys.executable}"'
         else:
-            python_path = self._get_app_path()
-            
             # 获取项目根目录（desktop_client 的父目录）
             module_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             project_root = os.path.dirname(module_path)
             
-            # 使用 cmd /c 切换到工作目录后再启动
-            return f'cmd /c "cd /d "{project_root}" && "{python_path}" -m desktop_client"'
+            # 创建一个启动脚本来隐藏控制台窗口
+            vbs_path = self._create_silent_launcher(project_root)
+            return f'wscript.exe "{vbs_path}"'
+    
+    def _create_silent_launcher(self, project_root: str) -> str:
+        """创建静默启动器脚本（VBS），避免显示黑框"""
+        # 获取 pythonw.exe 路径
+        python_path = self._get_app_path()
+        
+        # VBS 脚本内容
+        # 添加 --autostart 参数，让应用知道这是开机自启，可以使用更长的启动延迟
+        vbs_content = f'''
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.CurrentDirectory = "{project_root}"
+WshShell.Run """{python_path}"" -m desktop_client --autostart", 0, False
+'''
+        
+        # 保存到用户配置目录
+        from ..config import ClientConfig
+        config_dir = ClientConfig.get_config_dir()
+        vbs_path = os.path.join(str(config_dir), "autostart_launcher.vbs")
+        
+        with open(vbs_path, 'w', encoding='utf-8') as f:
+            f.write(vbs_content.strip())
+        
+        print(f"[Windows] 创建静默启动器: {vbs_path}")
+        return vbs_path
     
     def enable_autostart(self) -> Result:
         """启用开机自启"""

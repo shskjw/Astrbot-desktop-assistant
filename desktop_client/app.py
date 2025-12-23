@@ -136,6 +136,40 @@ class DesktopClientApp(QObject):
             lambda: asyncio.ensure_future(self._reconnect_server())
         )
         
+    def _is_autostart_launch(self) -> bool:
+        """检测是否为开机自启启动
+        
+        通过以下方式检测：
+        1. 命令行参数 --autostart
+        2. 环境变量 ASTRBOT_AUTOSTART
+        3. 系统启动时间判断（如果系统启动不足5分钟，可能是开机自启）
+        """
+        import time
+        
+        # 方式1：检查命令行参数
+        if '--autostart' in sys.argv:
+            return True
+        
+        # 方式2：检查环境变量
+        if os.environ.get('ASTRBOT_AUTOSTART') == '1':
+            return True
+        
+        # 方式3：检查系统启动时间（仅限有 psutil 的情况）
+        try:
+            import psutil
+            boot_time = psutil.boot_time()
+            uptime = time.time() - boot_time
+            # 如果系统启动不足3分钟，很可能是开机自启
+            if uptime < 180:
+                print(f"[DEBUG] 系统启动时间 {uptime:.1f} 秒，判断为开机自启")
+                return True
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"[DEBUG] 检测系统启动时间失败: {e}")
+        
+        return False
+    
     def run(self):
         """运行应用"""
         print("[DEBUG] run() 开始")
@@ -172,7 +206,16 @@ class DesktopClientApp(QObject):
     async def _startup(self):
         """启动时异步任务"""
         if self.config.server.auto_reconnect:
+            # 计算总启动延迟
             startup_delay = self.config.server.startup_delay
+            
+            # 检测是否为开机自启（通过命令行参数或环境变量）
+            is_autostart = self._is_autostart_launch()
+            if is_autostart:
+                extra_delay = getattr(self.config.server, 'autostart_extra_delay', 10)
+                startup_delay += extra_delay
+                print(f"[DEBUG] 检测到开机自启，增加额外延迟 {extra_delay} 秒")
+            
             if startup_delay > 0:
                 print(f"[DEBUG] 启动延迟 {startup_delay} 秒后连接...")
                 await asyncio.sleep(startup_delay)
@@ -193,8 +236,8 @@ class DesktopClientApp(QObject):
         if success:
             print(f"[DEBUG] 连接成功: {msg}")
             self._reconnect_attempts = 0
-            if self._floating_ball:
-                self._floating_ball.show_bubble("已连接到服务器")
+            # 注意：连接成功的系统消息由 message_handler._handle_status_message() 统一处理
+            # 避免重复显示"已连接到服务器"消息
             
             if self.config.proactive.enabled and self._proactive_service:
                 if not self._proactive_service.is_running:
@@ -203,7 +246,7 @@ class DesktopClientApp(QObject):
         else:
             print(f"[DEBUG] 连接失败: {msg}")
             if self._floating_ball:
-                self._floating_ball.show_bubble(f"连接失败: {msg}")
+                self._floating_ball.show_system_message(f"连接失败: {msg}")
             
             if self._proactive_service and self._proactive_service.is_running:
                 self._proactive_service.stop()
@@ -229,7 +272,7 @@ class DesktopClientApp(QObject):
         if max_attempts > 0 and self._reconnect_attempts >= max_attempts:
             print(f"[DEBUG] 已达到最大重连次数 ({max_attempts})，停止重连")
             if self._floating_ball:
-                self._floating_ball.show_bubble("连接失败，已达最大重试次数")
+                self._floating_ball.show_system_message("连接失败，已达最大重试次数")
             return
         
         base_interval = self.config.server.reconnect_interval

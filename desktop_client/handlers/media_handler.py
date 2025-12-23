@@ -124,31 +124,32 @@ class MediaHandler(QObject):
         dir_path = self._storage_dirs.get(msg_type, self._storage_dirs.get('file', ''))
         return os.path.join(dir_path, filename)
 
-    def handle_image_response(self, filename: str, metadata: dict) -> None:
+    def handle_image_response(self, filename: str, metadata: dict, should_silent: bool = False) -> None:
         """处理 AI 返回的图片"""
-        asyncio.ensure_future(self._download_media(filename, "image"))
+        asyncio.ensure_future(self._download_media(filename, "image", should_silent))
         
-    def handle_voice_response(self, filename: str, metadata: dict) -> None:
+    def handle_voice_response(self, filename: str, metadata: dict, should_silent: bool = False) -> None:
         """处理 AI 返回的语音"""
-        asyncio.ensure_future(self._download_media(filename, "voice"))
+        asyncio.ensure_future(self._download_media(filename, "voice", should_silent))
         
-    def handle_video_response(self, filename: str, metadata: dict) -> None:
+    def handle_video_response(self, filename: str, metadata: dict, should_silent: bool = False) -> None:
         """处理 AI 返回的视频"""
-        asyncio.ensure_future(self._download_media(filename, "video"))
+        asyncio.ensure_future(self._download_media(filename, "video", should_silent))
         
-    async def _download_media(self, filename: str, msg_type: str) -> None:
+    async def _download_media(self, filename: str, msg_type: str, should_silent: bool = False) -> None:
         """
         下载媒体文件并显示
         
         Args:
             filename: 文件名
             msg_type: 消息类型
+            should_silent: 是否静默处理
         """
         save_path = self.get_save_path(filename, msg_type)
         
         # 检查是否是主动对话的响应
         is_proactive_response = (
-            self._message_handler and 
+            self._message_handler and
             self._message_handler.is_proactive_pending()
         )
         
@@ -157,12 +158,12 @@ class MediaHandler(QObject):
         
         # 检查是否正在等待响应（用户主动发起的对话）
         is_user_waiting = (
-            self._floating_ball and 
+            self._floating_ball and
             self._floating_ball.is_waiting_response()
         )
         
-        # 判断是否需要静默处理
-        should_silent = do_not_disturb and not is_user_waiting
+        # 判断是否需要静默处理 (优先使用传入参数，否则使用免打扰配置)
+        should_silent = should_silent or do_not_disturb
         
         # 下载文件
         if not self._bridge:
@@ -201,19 +202,35 @@ class MediaHandler(QObject):
             elif msg_type == "video":
                 # 构建消息内容：path|thumbnail|duration
                 content = f"{save_path}||0"
-                
-            if self._floating_ball:
-                # 通过 compact_window 添加消息
-                self._floating_ball._compact_window.add_ai_message(content, msg_type)
-                self._floating_ball.show_input()
+            
+            if is_proactive_response or should_silent:
+                # 静默模式：添加到历史记录，不弹窗
+                if self._chat_history_manager:
+                    self._chat_history_manager.add_message(
+                        role="assistant",
+                        content=content,
+                        msg_type=msg_type,
+                        file_path=save_path
+                    )
+                # 设置未读消息标记
+                if self._floating_ball:
+                    self._floating_ball.set_unread_message(True)
+            else:
+                # 正常模式：在窗口中显示并弹出
+                if self._floating_ball:
+                    # 通过 compact_window 添加消息
+                    self._floating_ball._compact_window.add_ai_message(content, msg_type)
+                    self._floating_ball.show_input()
                 
             # 发射信号
             self.download_completed.emit(save_path, msg_type)
         else:
             error_msg = f"下载失败: {filename}"
             logger.error(error_msg)
-            if self._floating_ball:
+            if self._floating_ball and not should_silent:
                 self._floating_ball.show_bubble(f"❌ {error_msg}")
+            elif self._floating_ball and should_silent:
+                self._floating_ball.set_unread_message(True)
             self.download_failed.emit(filename, error_msg)
                 
     def play_audio(self, audio_path: str) -> None:
@@ -233,7 +250,7 @@ class MediaHandler(QObject):
                 self._audio_player.setAudioOutput(self._audio_output)
                 
             self._audio_player.setSource(QUrl.fromLocalFile(audio_path))
-            self._audio_output.setVolume(1.0)
+            self._audio_output.setVolume(1.0) # type: ignore
             self._audio_player.play()
         except ImportError:
             logger.warning("QMediaPlayer 不可用，无法播放语音")

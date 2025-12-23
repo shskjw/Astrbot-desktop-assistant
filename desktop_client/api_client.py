@@ -213,10 +213,14 @@ class AstrBotApiClient:
         self._sse_client: Optional[httpx.AsyncClient] = None
         self.ws_client: Optional[WebSocketClient] = None
         
-        # 连接健康检测
+        # 连接健康检测配置优化：
+        # - 检查间隔增加到 30 秒，减少不必要的网络请求
+        # - 连续失败计数器，避免单次超时就触发断联
         self._health_check_task: Optional[asyncio.Task] = None
         self._last_successful_request: float = 0
-        self._health_check_interval: int = 30  # 30秒检测一次
+        self._health_check_interval: int = 30  # 30秒检测一次（从10秒增加）
+        self._health_check_failures: int = 0  # 连续失败计数
+        self._max_health_check_failures: int = 3  # 连续失败多少次才触发断联
         
     @property
     def state(self) -> ConnectionState:
@@ -319,15 +323,25 @@ class AstrBotApiClient:
                 
                 # 只在连接状态下检测
                 if self._state != ConnectionState.CONNECTED:
+                    # 重置失败计数（非连接状态不计入失败）
+                    self._health_check_failures = 0
                     continue
                 
                 # 检测连接是否健康
                 is_healthy = await self.check_connection()
                 
                 if not is_healthy:
-                    print("[WARNING] 连接健康检测失败，触发重连")
-                    self.state = ConnectionState.DISCONNECTED
+                    self._health_check_failures += 1
+                    print(f"[WARNING] 连接健康检测失败 ({self._health_check_failures}/{self._max_health_check_failures})")
+                    
+                    # 只有连续失败达到阈值才触发断联
+                    if self._health_check_failures >= self._max_health_check_failures:
+                        print("[WARNING] 连续健康检测失败达到阈值，触发重连")
+                        self._health_check_failures = 0  # 重置计数
+                        self.state = ConnectionState.DISCONNECTED
                 else:
+                    # 检测成功，重置失败计数
+                    self._health_check_failures = 0
                     self._last_successful_request = time.time()
                     
             except asyncio.CancelledError:
@@ -641,6 +655,9 @@ class AstrBotApiClient:
             else:
                 return False, None
                 
+        except httpx.ConnectError:
+            self.state = ConnectionState.DISCONNECTED
+            return False, None
         except Exception as e:
             print(f"上传文件失败: {e}")
             return False, None
@@ -664,6 +681,9 @@ class AstrBotApiClient:
             
             return True
             
+        except httpx.ConnectError:
+            self.state = ConnectionState.DISCONNECTED
+            return False
         except Exception as e:
             print(f"下载文件失败: {e}")
             return False
@@ -784,9 +804,15 @@ class AstrBotApiClient:
                                 continue
                         
         except httpx.ConnectError as e:
+            self.state = ConnectionState.DISCONNECTED
             yield SSEEvent(event_type="error", data=f"连接失败: {e}")
         except httpx.TimeoutException as e:
-            yield SSEEvent(event_type="error", data=f"请求超时（服务器响应时间过长）: {e}")
+            # 如果是连接超时，也标记为断开
+            if isinstance(e, (httpx.ConnectTimeout, httpx.PoolTimeout)):
+                self.state = ConnectionState.DISCONNECTED
+                yield SSEEvent(event_type="error", data=f"连接超时: {e}")
+            else:
+                yield SSEEvent(event_type="error", data=f"请求超时（服务器响应时间过长）: {e}")
         except GeneratorExit:
             pass
         except Exception as e:

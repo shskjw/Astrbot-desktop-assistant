@@ -24,7 +24,9 @@ class ServerConfig:
     auto_reconnect: bool = True
     reconnect_interval: int = 5  # 秒
     # 启动延迟连接（秒），用于开机自启时等待网络就绪
-    startup_delay: int = 3
+    startup_delay: int = 5
+    # 开机自启时的额外延迟（秒），给系统更多时间初始化网络
+    autostart_extra_delay: int = 10
     # 最大重连次数，0表示无限重连
     max_reconnect_attempts: int = 0
     # 请求超时
@@ -52,6 +54,8 @@ class CustomThemeConfig:
     # 文字颜色
     text_primary: str = ""
     text_secondary: str = ""
+    # 系统通知颜色
+    system_notice_text: str = ""
     # 悬浮球颜色
     ball_bg: str = ""
     ball_glow: str = ""

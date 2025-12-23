@@ -50,6 +50,9 @@ class ThemeColors:
     text_placeholder: str = "#C0C4CC"
     text_inverse: str = "#FFFFFF"
     
+    # 系统通知颜色
+    system_notice_text: str = "#666666"
+    
     # 边框色
     border_base: str = "#DCDFE6"
     border_light: str = "#E4E7ED"
@@ -391,6 +394,7 @@ class ThemeManager:
             'bg_secondary': 'bg_secondary',
             'text_primary': 'text_primary',
             'text_secondary': 'text_secondary',
+            'system_notice_text': 'system_notice_text',
             'ball_bg': 'ball_bg',
             'ball_glow': 'ball_glow',
             'ball_border': 'ball_border',

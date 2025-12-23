@@ -91,12 +91,12 @@ class MessageHandler(QObject):
         
         # 检查是否正在等待响应（用户主动发起的对话）
         is_user_waiting = (
-            self._floating_ball and 
+            self._floating_ball and
             self._floating_ball.is_waiting_response()
         )
         
-        # 判断是否需要静默处理（免打扰模式 + 非用户主动发起的对话）
-        should_silent = do_not_disturb and not is_user_waiting
+        # 判断是否需要静默处理（免打扰模式）
+        should_silent = do_not_disturb
         
         if msg_type == "text":
             self._handle_text_message(
@@ -110,20 +110,23 @@ class MessageHandler(QObject):
         elif msg_type == "image":
             # AI 返回的图片
             if self._media_handler:
-                self._media_handler.handle_image_response(content, message.metadata)
+                self._media_handler.handle_image_response(content, message.metadata, should_silent)
                     
         elif msg_type == "voice":
             # AI 返回的语音
             if self._media_handler:
-                self._media_handler.handle_voice_response(content, message.metadata)
+                self._media_handler.handle_voice_response(content, message.metadata, should_silent)
             
         elif msg_type == "video":
             # AI 返回的视频
             if self._media_handler:
-                self._media_handler.handle_video_response(content, message.metadata)
+                self._media_handler.handle_video_response(content, message.metadata, should_silent)
                     
         elif msg_type == "end":
             self._handle_end_message(is_proactive_response, should_silent)
+        
+        elif msg_type == "status":
+            self._handle_status_message(content)
                 
         elif msg_type == "error":
             self._handle_error_message(
@@ -131,6 +134,25 @@ class MessageHandler(QObject):
                 is_proactive_response,
                 should_silent
             )
+
+    def _handle_status_message(self, content: str) -> None:
+        """处理状态消息（连接状态变更）"""
+        if not self._floating_ball:
+            return
+            
+        from ..api_client import ConnectionState
+        from ..gui.floating_ball import FloatingBallState
+        
+        # content 是 ConnectionState 的 value
+        if content == ConnectionState.DISCONNECTED.value:
+            self._floating_ball.set_state(FloatingBallState.DISCONNECTED)
+            self._floating_ball.show_system_message("❌ 与服务器断开连接")
+        elif content == ConnectionState.CONNECTED.value:
+            self._floating_ball.set_state(FloatingBallState.NORMAL)
+            self._floating_ball.show_system_message("✅ 已连接到服务器")
+        elif content == ConnectionState.CONNECTING.value:
+            # 连接中，暂不处理，保持当前状态或显示加载动画
+            pass
             
     def _handle_text_message(
         self,
@@ -225,6 +247,11 @@ class MessageHandler(QObject):
                 # 仅设置未读消息标记（显示动画效果）
                 if self._floating_ball:
                     self._floating_ball.set_unread_message(True)
+            
+            # 如果是用户等待中（但被静默了），需要重置等待状态
+            if self._floating_ball and self._floating_ball.is_waiting_response():
+                self._floating_ball.finish_response()
+
             # 清理状态
             if is_proactive_response:
                 self._proactive_dialog_pending = False
@@ -248,6 +275,11 @@ class MessageHandler(QObject):
             if is_proactive_response:
                 self._proactive_dialog_pending = False
             self._silent_response_buffer = ""
+            
+            # 如果是用户等待中（但被静默了），需要重置等待状态
+            if self._floating_ball and self._floating_ball.is_waiting_response():
+                self._floating_ball.finish_response()
+
             # 静默模式下错误也只显示未读标记
             if self._floating_ball:
                 self._floating_ball.set_unread_message(True)

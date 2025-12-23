@@ -718,6 +718,7 @@ class SettingsWindow(QWidget):
         text_colors = [
             ("text_primary", "主文字色", "【标题、正文】窗口标题、消息内容、按钮文字的颜色"),
             ("text_secondary", "次文字色", "【描述、提示】标签说明、占位符文字、次要信息的颜色"),
+            ("system_notice_text", "系统通知色", "【系统通知】连接状态、系统提示信息的文字颜色"),
         ]
         self._add_color_group(text_section, text_colors)
         layout.addWidget(text_section)
@@ -1245,12 +1246,6 @@ class SettingsWindow(QWidget):
             self._username.setText(self.config.server.username or "")
             self._password.setText(self.config.server.password or "")
             self._enable_streaming.setChecked(self.config.server.enable_streaming)
-        elif hasattr(self.config, 'server_url'):  # Legacy object
-            self._server_url.setText(self.config.server_url or "")
-            if hasattr(self.config, 'username'):
-                self._username.setText(self.config.username or "")
-            if hasattr(self.config, 'password'):
-                self._password.setText(self.config.password or "")
         elif isinstance(self.config, dict):  # Dict
             self._server_url.setText(self.config.get('server_url', ''))
             self._username.setText(self.config.get('username', ''))
@@ -1409,7 +1404,7 @@ class SettingsWindow(QWidget):
             color_fields = [
                 'primary', 'primary_light', 'primary_dark',
                 'bg_primary', 'bg_secondary',
-                'text_primary', 'text_secondary',
+                'text_primary', 'text_secondary', 'system_notice_text',
                 'ball_bg', 'ball_glow', 'ball_border',
                 'bubble_user_bg', 'bubble_user_text',
                 'bubble_ai_bg', 'bubble_ai_text',
@@ -1660,6 +1655,7 @@ class SettingsWindow(QWidget):
             self.config.appearance.custom_theme.bg_secondary = custom_theme_config.bg_secondary
             self.config.appearance.custom_theme.text_primary = custom_theme_config.text_primary
             self.config.appearance.custom_theme.text_secondary = custom_theme_config.text_secondary
+            self.config.appearance.custom_theme.system_notice_text = custom_theme_config.system_notice_text
             self.config.appearance.custom_theme.ball_bg = custom_theme_config.ball_bg
             self.config.appearance.custom_theme.ball_glow = custom_theme_config.ball_glow
             self.config.appearance.custom_theme.ball_border = custom_theme_config.ball_border

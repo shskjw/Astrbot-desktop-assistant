@@ -942,6 +942,42 @@ class CompactChatWindow(QWidget):
         self._current_ai_message = ""
         self._current_ai_label = None
         
+    def add_system_message(self, text: str):
+        """添加系统通知消息（仅UI，不保存到历史）"""
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(0)
+        
+        # 居中布局
+        layout.addStretch()
+        
+        lbl = QLabel(text)
+        
+        # 获取样式配置
+        t = theme_manager.current_theme
+        c = theme_manager.get_current_colors()
+        
+        # 字体大小比基准小 2px
+        font_size = max(10, t.font_size_base - 2)
+        
+        lbl.setStyleSheet(f"""
+            QLabel {{
+                color: {c.system_notice_text};
+                font-family: {t.font_family};
+                font-size: {font_size}px;
+                padding: 2px 8px;
+                border-radius: 4px;
+            }}
+        """)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addWidget(lbl)
+        layout.addStretch()
+        
+        self._add_to_history(container)
+
     def add_user_message(self, text: str, image_path: Optional[str] = None):
         """添加用户消息（通过历史记录管理器）"""
         if image_path:
@@ -1459,7 +1495,10 @@ class FloatingBallWindow(QWidget):
         self._breath_timer = QTimer(self)
         self._breath_timer.timeout.connect(self._update_breathing)
         self._breath_phase = 0.0
-        self._breath_timer.start(50)  # 20 FPS
+        self._breath_timer.start(30)  # ~33 FPS
+        
+        # 优化刷新：记录上次需要刷新的状态，避免无意义的 update
+        self._needs_update = True
         
         # 悬停状态
         self._hovered = False
@@ -1483,6 +1522,7 @@ class FloatingBallWindow(QWidget):
         """设置状态"""
         if self._state != state:
             self._state = state
+            self._needs_update = True
             self.update()
 
     def _on_theme_changed(self, theme: Theme):
@@ -1532,19 +1572,30 @@ class FloatingBallWindow(QWidget):
         
     def _update_breathing(self):
         """更新呼吸灯效果"""
+        should_update = False
+        
         if self._breathing:
-            self._breath_phase += 0.08
+            self._breath_phase += 0.02
             if self._breath_phase > 2 * math.pi:
                 self._breath_phase -= 2 * math.pi
             self._glow_intensity = (math.sin(self._breath_phase) + 1) / 2 * 0.4 + 0.3
+            should_update = True
         
         # 未读消息脉冲动画（更快的频率）
         if self._has_unread:
-            self._pulse_phase += 0.15  # 更快的脉冲
+            self._pulse_phase += 0.10  # 更快的脉冲
             if self._pulse_phase > 2 * math.pi:
                 self._pulse_phase -= 2 * math.pi
-        
-        self.update()
+            should_update = True
+            
+        # 如果状态不是 NORMAL，也需要刷新（可能有其他动画效果）
+        if self._state != FloatingBallState.NORMAL and self._state != FloatingBallState.DISCONNECTED:
+            should_update = True
+            
+        # 只有在需要时才调用 update，减少 CPU 占用和潜在的闪烁
+        if should_update or self._needs_update:
+            self.update()
+            self._needs_update = False
         
     def _move_to_default_position(self):
         """移动到默认位置"""
@@ -1574,6 +1625,9 @@ class FloatingBallWindow(QWidget):
         if self._state == FloatingBallState.DISCONNECTED:
             base_color = QColor(colors.text_secondary)
             glow_color = QColor(colors.text_secondary)
+            # 在断开连接状态下强制刷新以确保灰色显示
+            if not self._breathing:
+                self._needs_update = True
         elif self._state == FloatingBallState.BUSY:
             base_color = QColor(colors.warning)
             glow_color = QColor(colors.warning)
@@ -1959,6 +2013,10 @@ class FloatingBallWindow(QWidget):
         self._update_compact_window_position()
         self._compact_window.add_ai_message(text)
         self._compact_window.show()
+
+    def show_system_message(self, text: str):
+        """显示系统消息 (显示在精简窗口中，不强制弹窗)"""
+        self._compact_window.add_system_message(text)
         
     def toggle_input(self):
         """切换输入框显示/隐藏"""
