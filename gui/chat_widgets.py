@@ -115,7 +115,7 @@ class VoiceMessageWidget(QFrame):
         
     def _apply_theme(self):
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         self.setStyleSheet(f"""
             QFrame#voiceMessage {{
@@ -324,7 +324,7 @@ class VideoMessageWidget(QFrame):
         
     def _apply_theme(self):
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         self.setStyleSheet(f"""
             QFrame#videoMessage {{
@@ -436,7 +436,7 @@ class FileMessageWidget(QFrame):
         
     def _apply_theme(self):
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         self.setStyleSheet(f"""
             QFrame#fileMessage {{
@@ -553,7 +553,7 @@ class ClickableImageLabel(QLabel):
         
         # 应用主题样式
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         menu.setStyleSheet(f"""
             QMenu {{
                 background-color: {c.bg_primary};
@@ -704,7 +704,7 @@ class ImagePreviewDialog(QDialog):
     def _apply_theme(self):
         """应用主题样式"""
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         self.setStyleSheet(f"""
             QDialog {{

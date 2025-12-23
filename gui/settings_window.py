@@ -9,16 +9,16 @@
 """
 
 import os
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QFrame, QScrollArea,
     QComboBox, QCheckBox, QGroupBox, QFormLayout,
     QFileDialog, QTabWidget, QKeySequenceEdit,
     QSpinBox, QDoubleSpinBox, QSlider, QMessageBox,
-    QTimeEdit
+    QTimeEdit, QColorDialog, QGridLayout
 )
 from PySide6.QtCore import Qt, Signal, QTime
 from qasync import asyncSlot
@@ -26,9 +26,92 @@ from qasync import asyncSlot
 from ..api_client import AstrBotApiClient
 from ..utils.autostart import is_autostart_enabled, set_autostart
 from ..services import get_chat_history_manager
-from ..config import save_config, ClientConfig
+from ..config import save_config, ClientConfig, CustomThemeConfig
 from .themes import theme_manager, Theme
 from .hotkeys import HotkeyConfig, hotkey_manager
+
+
+class ColorPickerButton(QPushButton):
+    """颜色选择器按钮
+    
+    显示当前颜色预览，点击弹出 QColorDialog 选择颜色。
+    """
+    
+    color_changed = Signal(str)  # 颜色变化信号，传递十六进制颜色值
+    
+    def __init__(self, color: str = "", parent=None):
+        super().__init__(parent)
+        self._color = color
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clicked.connect(self._on_click)
+        self._update_style()
+    
+    @property
+    def color(self) -> str:
+        """获取当前颜色值"""
+        return self._color
+    
+    @color.setter
+    def color(self, value: str):
+        """设置颜色值"""
+        self._color = value
+        self._update_style()
+    
+    def _update_style(self):
+        """更新按钮样式以显示当前颜色"""
+        if self._color:
+            # 有颜色时显示颜色
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self._color};
+                    border: 2px solid #CCCCCC;
+                    border-radius: 4px;
+                }}
+                QPushButton:hover {{
+                    border-color: #409EFF;
+                }}
+            """)
+            self.setText("")
+        else:
+            # 无颜色时显示占位符
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #F5F5F5;
+                    border: 2px dashed #CCCCCC;
+                    border-radius: 4px;
+                    color: #999999;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    border-color: #409EFF;
+                }
+            """)
+            self.setText("...")
+    
+    def _on_click(self):
+        """点击按钮时弹出颜色选择对话框"""
+        initial_color = QColor(self._color) if self._color else QColor("#FFFFFF")
+        color = QColorDialog.getColor(
+            initial_color,
+            self,
+            "选择颜色",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel
+        )
+        if color.isValid():
+            # 如果有透明度，使用 rgba 格式
+            if color.alpha() < 255:
+                self._color = f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha() / 255:.2f})"
+            else:
+                self._color = color.name()  # 十六进制格式
+            self._update_style()
+            self.color_changed.emit(self._color)
+    
+    def clear_color(self):
+        """清除颜色"""
+        self._color = ""
+        self._update_style()
+        self.color_changed.emit("")
 
 
 class SettingsSection(QFrame):
@@ -142,6 +225,9 @@ class SettingsWindow(QWidget):
         
         # 存储设置
         self._tabs.addTab(self._create_storage_tab(), "💾 存储")
+        
+        # 自定义颜色设置
+        self._tabs.addTab(self._create_custom_colors_tab(), "🎨 自定义颜色")
         
         main_layout.addWidget(self._tabs, 1)
         
@@ -467,6 +553,27 @@ class SettingsWindow(QWidget):
         voice_section.add_widget(self._auto_play_voice)
         
         layout.addWidget(voice_section)
+        
+        # 免打扰模式
+        dnd_section = SettingsSection("免打扰模式")
+        
+        self._do_not_disturb = QCheckBox("启用免打扰模式")
+        self._do_not_disturb.setToolTip(
+            "启用后，收到消息时不会弹出对话窗口，只会显示悬浮球动画效果。\n"
+            "语音消息会在后台自动播放（需启用自动播放语音）。\n"
+            "适合游戏或全屏工作时使用。"
+        )
+        dnd_section.add_widget(self._do_not_disturb)
+        
+        dnd_info = QLabel(
+            "💡 提示：启用免打扰模式后，收到消息时悬浮球会显示脉冲动画提示，\n"
+            "点击悬浮球可查看消息。语音消息会自动在后台播放。"
+        )
+        dnd_info.setWordWrap(True)
+        dnd_info.setObjectName("infoLabel")
+        dnd_section.add_widget(dnd_info)
+        
+        layout.addWidget(dnd_section)
         layout.addStretch()
         
         return tab
@@ -558,6 +665,231 @@ class SettingsWindow(QWidget):
         layout.addStretch()
         
         return tab
+
+    def _create_custom_colors_tab(self) -> QWidget:
+        """创建自定义颜色设置标签页"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # 滚动内容容器
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        # 启用自定义颜色
+        enable_section = SettingsSection("启用设置")
+        self._custom_colors_enabled = QCheckBox("启用自定义颜色")
+        self._custom_colors_enabled.setToolTip("开启后，将使用下方自定义的颜色覆盖当前主题的对应颜色")
+        self._custom_colors_enabled.stateChanged.connect(self._on_custom_colors_toggle)
+        enable_section.add_widget(self._custom_colors_enabled)
+        layout.addWidget(enable_section)
+        
+        # 存储颜色选择器按钮的字典
+        self._color_pickers: Dict[str, ColorPickerButton] = {}
+        
+        # 主题色组
+        primary_section = SettingsSection("🎨 主题色 - 控制整体视觉风格")
+        primary_colors = [
+            ("primary", "主色调", "【保存按钮、链接、选中状态】按钮背景、选中项高亮、标签页底部线条的颜色"),
+            ("primary_light", "主色调（浅）", "【悬停效果】鼠标悬停时的浅色高亮效果"),
+            ("primary_dark", "主色调（深）", "【按下效果】按钮按下时的深色效果"),
+        ]
+        self._add_color_group(primary_section, primary_colors)
+        layout.addWidget(primary_section)
+        
+        # 背景色组
+        bg_section = SettingsSection("🖼️ 背景色 - 控制窗口和区域背景")
+        bg_colors = [
+            ("bg_primary", "主背景色", "【主窗口背景】聊天窗口、设置窗口的整体背景颜色"),
+            ("bg_secondary", "次背景色", "【面板/卡片背景】设置分区、输入框区域、标签栏的背景颜色"),
+        ]
+        self._add_color_group(bg_section, bg_colors)
+        layout.addWidget(bg_section)
+        
+        # 文字色组
+        text_section = SettingsSection("📝 文字颜色 - 控制文字显示")
+        text_colors = [
+            ("text_primary", "主文字色", "【标题、正文】窗口标题、消息内容、按钮文字的颜色"),
+            ("text_secondary", "次文字色", "【描述、提示】标签说明、占位符文字、次要信息的颜色"),
+        ]
+        self._add_color_group(text_section, text_colors)
+        layout.addWidget(text_section)
+        
+        # 悬浮球颜色组
+        ball_section = SettingsSection("🔮 悬浮球颜色 - 控制桌面悬浮球外观")
+        ball_colors = [
+            ("ball_bg", "悬浮球背景", "【悬浮球圆形背景】桌面右下角悬浮球的填充颜色"),
+            ("ball_glow", "悬浮球光晕", "【呼吸灯效果】悬浮球周围闪烁的光晕颜色"),
+            ("ball_border", "悬浮球边框", "【悬浮球边框】悬浮球外圈的边框颜色"),
+        ]
+        self._add_color_group(ball_section, ball_colors)
+        layout.addWidget(ball_section)
+        
+        # 聊天气泡颜色组
+        bubble_section = SettingsSection("💬 聊天气泡颜色 - 控制消息气泡外观")
+        bubble_colors = [
+            ("bubble_user_bg", "用户气泡背景", "【您发送的消息】用户消息气泡的背景颜色（右侧气泡）"),
+            ("bubble_user_text", "用户气泡文字", "【您发送的消息文字】用户消息中文字的颜色"),
+            ("bubble_ai_bg", "AI气泡背景", "【AI回复的消息】AI 消息气泡的背景颜色（左侧气泡）"),
+            ("bubble_ai_text", "AI气泡文字", "【AI回复的消息文字】AI 消息中文字的颜色"),
+        ]
+        self._add_color_group(bubble_section, bubble_colors)
+        layout.addWidget(bubble_section)
+        
+        # 恢复默认按钮
+        reset_section = SettingsSection("操作")
+        reset_btn_row = QFrame()
+        reset_btn_layout = QHBoxLayout(reset_btn_row)
+        reset_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._reset_custom_colors_btn = QPushButton("🔄 恢复默认颜色")
+        self._reset_custom_colors_btn.setToolTip("清除所有自定义颜色，恢复为当前主题的默认颜色")
+        self._reset_custom_colors_btn.clicked.connect(self._on_reset_custom_colors)
+        
+        self._preview_colors_btn = QPushButton("👁️ 预览效果")
+        self._preview_colors_btn.setToolTip("立即应用当前颜色设置进行预览（不保存）")
+        self._preview_colors_btn.clicked.connect(self._on_preview_custom_colors)
+        
+        reset_btn_layout.addWidget(self._reset_custom_colors_btn)
+        reset_btn_layout.addWidget(self._preview_colors_btn)
+        reset_btn_layout.addStretch()
+        
+        reset_section.add_widget(reset_btn_row)
+        layout.addWidget(reset_section)
+        
+        # 说明信息
+        info_section = SettingsSection("📖 使用说明")
+        info_label = QLabel(
+            "• 启用自定义颜色后，您设置的颜色将覆盖当前主题的对应颜色。\n"
+            "• 留空的颜色项将使用当前主题的默认颜色。\n"
+            "• 点击颜色预览框可打开颜色选择器，支持 RGBA 透明色。\n"
+            "• 更换主题后，自定义颜色仍然有效。\n"
+            "• 【即时生效】保存后颜色立即应用到所有界面。\n"
+            "\n"
+            "💡 颜色对应关系示例：\n"
+            "  - 主色调 → 保存按钮、选中的标签页\n"
+            "  - 主背景色 → 聊天窗口整体背景\n"
+            "  - 次背景色 → 输入框区域、设置面板\n"
+            "  - 用户气泡背景 → 您发送的消息（右侧）\n"
+            "  - AI气泡背景 → AI回复的消息（左侧）"
+        )
+        info_label.setWordWrap(True)
+        info_label.setObjectName("infoLabel")
+        info_section.add_widget(info_label)
+        
+        layout.addWidget(info_section)
+        layout.addStretch()
+        
+        # 设置滚动内容
+        scroll_area.setWidget(scroll_content)
+        tab_layout.addWidget(scroll_area)
+        
+        return tab
+    
+    def _add_color_group(self, section: SettingsSection, colors: list):
+        """添加一组颜色选择器到设置分区
+        
+        Args:
+            section: 设置分区
+            colors: 颜色配置列表，每项为 (key, label, tooltip)
+        """
+        for key, label, tooltip in colors:
+            row = QFrame()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(12)
+            
+            # 标签
+            lbl = QLabel(label)
+            lbl.setObjectName("settingLabel")
+            lbl.setMinimumWidth(100)
+            lbl.setToolTip(tooltip)
+            
+            # 颜色预览按钮
+            color_btn = ColorPickerButton()
+            color_btn.setToolTip(f"点击选择{label}")
+            color_btn.color_changed.connect(lambda c, k=key: self._on_color_changed(k, c))
+            self._color_pickers[key] = color_btn
+            
+            # 清除按钮
+            clear_btn = QPushButton("✕")
+            clear_btn.setFixedSize(24, 24)
+            clear_btn.setToolTip("清除此颜色")
+            clear_btn.clicked.connect(lambda checked, k=key: self._on_clear_color(k))
+            
+            row_layout.addWidget(lbl)
+            row_layout.addWidget(color_btn)
+            row_layout.addWidget(clear_btn)
+            row_layout.addStretch()
+            
+            section.add_widget(row)
+    
+    def _on_custom_colors_toggle(self, state):
+        """自定义颜色开关变化"""
+        enabled = state == Qt.CheckState.Checked.value
+        # 更新所有颜色选择器的可用状态
+        for picker in self._color_pickers.values():
+            picker.setEnabled(enabled)
+    
+    def _on_color_changed(self, key: str, color: str):
+        """颜色变化回调"""
+        # 颜色变化时可以选择立即预览
+        pass
+    
+    def _on_clear_color(self, key: str):
+        """清除指定颜色"""
+        if key in self._color_pickers:
+            self._color_pickers[key].clear_color()
+    
+    def _on_reset_custom_colors(self):
+        """恢复默认颜色"""
+        reply = QMessageBox.question(
+            self,
+            "确认恢复",
+            "确定要清除所有自定义颜色吗？\n这将恢复为当前主题的默认颜色。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清除所有颜色选择器
+            for picker in self._color_pickers.values():
+                picker.clear_color()
+            # 禁用自定义颜色
+            self._custom_colors_enabled.setChecked(False)
+            # 重置主题管理器的自定义颜色
+            theme_manager.reset_custom_colors()
+            QMessageBox.information(self, "成功", "已恢复默认颜色。")
+    
+    def _on_preview_custom_colors(self):
+        """预览自定义颜色效果"""
+        if not self._custom_colors_enabled.isChecked():
+            QMessageBox.information(self, "提示", "请先启用自定义颜色。")
+            return
+        
+        # 构建临时配置并应用
+        custom_config = self._build_custom_theme_config()
+        theme_manager.apply_custom_colors(custom_config)
+        QMessageBox.information(self, "预览", "自定义颜色已应用预览。\n点击「保存」永久保存，或点击「重置」取消。")
+    
+    def _build_custom_theme_config(self) -> CustomThemeConfig:
+        """从 UI 构建 CustomThemeConfig 对象"""
+        config = CustomThemeConfig()
+        config.enabled = self._custom_colors_enabled.isChecked()
+        
+        # 遍历所有颜色选择器
+        for key, picker in self._color_pickers.items():
+            if hasattr(config, key):
+                setattr(config, key, picker.color)
+        
+        return config
 
     def _on_browse_storage_path(self):
         """浏览存储路径"""
@@ -750,7 +1082,7 @@ class SettingsWindow(QWidget):
     def _apply_theme(self):
         """应用主题样式"""
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         self.setStyleSheet(f"""
             QWidget {{
@@ -1010,6 +1342,12 @@ class SettingsWindow(QWidget):
         # 语音设置
         if hasattr(self.config, 'voice'):
             self._auto_play_voice.setChecked(self.config.voice.auto_play_voice)
+        
+        # 免打扰模式
+        if hasattr(self.config, 'interaction') and hasattr(self.config.interaction, 'do_not_disturb'):
+            self._do_not_disturb.setChecked(self.config.interaction.do_not_disturb)
+        else:
+            self._do_not_disturb.setChecked(False)
 
         # 主动对话设置
         if hasattr(self.config, 'proactive'):
@@ -1061,6 +1399,34 @@ class SettingsWindow(QWidget):
         chat_manager = get_chat_history_manager()
         msg_count = chat_manager.get_message_count()
         self._chat_count_label.setText(f"当前共 {msg_count} 条消息")
+        
+        # 自定义颜色设置
+        if hasattr(self.config, 'appearance') and hasattr(self.config.appearance, 'custom_theme'):
+            custom_theme = self.config.appearance.custom_theme
+            self._custom_colors_enabled.setChecked(custom_theme.enabled)
+            
+            # 加载各个颜色值到选择器
+            color_fields = [
+                'primary', 'primary_light', 'primary_dark',
+                'bg_primary', 'bg_secondary',
+                'text_primary', 'text_secondary',
+                'ball_bg', 'ball_glow', 'ball_border',
+                'bubble_user_bg', 'bubble_user_text',
+                'bubble_ai_bg', 'bubble_ai_text',
+            ]
+            for field in color_fields:
+                if field in self._color_pickers:
+                    color_value = getattr(custom_theme, field, '')
+                    self._color_pickers[field].color = color_value
+            
+            # 根据启用状态设置颜色选择器的可用性
+            for picker in self._color_pickers.values():
+                picker.setEnabled(custom_theme.enabled)
+        else:
+            # 默认禁用
+            self._custom_colors_enabled.setChecked(False)
+            for picker in self._color_pickers.values():
+                picker.setEnabled(False)
                 
     def _on_theme_selected(self, index: int):
         """主题选择变化"""
@@ -1214,6 +1580,7 @@ class SettingsWindow(QWidget):
                 'double_click': self._double_click_action.currentData(),
                 'bubble_duration': self._bubble_duration.value(),
                 'bubble_auto_hide': self._bubble_auto_hide.isChecked(),
+                'do_not_disturb': self._do_not_disturb.isChecked(),
             },
             'voice': {
                 'auto_play_voice': self._auto_play_voice.isChecked(),
@@ -1232,6 +1599,7 @@ class SettingsWindow(QWidget):
                 'image_save_path': self._image_save_path.text().strip(),
                 'chat_history_path': self._chat_history_path.text().strip(),
             },
+            'custom_theme': self._build_custom_theme_config(),
         }
         
         # 更新配置对象
@@ -1263,6 +1631,7 @@ class SettingsWindow(QWidget):
             self.config.interaction.double_click = settings['interaction']['double_click']
             self.config.interaction.bubble_duration = settings['interaction']['bubble_duration']
             self.config.interaction.bubble_auto_hide = settings['interaction']['bubble_auto_hide']
+            self.config.interaction.do_not_disturb = settings['interaction']['do_not_disturb']
             
             # 语音
             self.config.voice.auto_play_voice = settings['voice']['auto_play_voice']
@@ -1280,6 +1649,30 @@ class SettingsWindow(QWidget):
             # 存储
             self.config.storage.image_save_path = settings['storage']['image_save_path']
             self.config.storage.chat_history_path = settings['storage']['chat_history_path']
+            
+            # 自定义颜色
+            custom_theme_config = settings['custom_theme']
+            self.config.appearance.custom_theme.enabled = custom_theme_config.enabled
+            self.config.appearance.custom_theme.primary = custom_theme_config.primary
+            self.config.appearance.custom_theme.primary_light = custom_theme_config.primary_light
+            self.config.appearance.custom_theme.primary_dark = custom_theme_config.primary_dark
+            self.config.appearance.custom_theme.bg_primary = custom_theme_config.bg_primary
+            self.config.appearance.custom_theme.bg_secondary = custom_theme_config.bg_secondary
+            self.config.appearance.custom_theme.text_primary = custom_theme_config.text_primary
+            self.config.appearance.custom_theme.text_secondary = custom_theme_config.text_secondary
+            self.config.appearance.custom_theme.ball_bg = custom_theme_config.ball_bg
+            self.config.appearance.custom_theme.ball_glow = custom_theme_config.ball_glow
+            self.config.appearance.custom_theme.ball_border = custom_theme_config.ball_border
+            self.config.appearance.custom_theme.bubble_user_bg = custom_theme_config.bubble_user_bg
+            self.config.appearance.custom_theme.bubble_user_text = custom_theme_config.bubble_user_text
+            self.config.appearance.custom_theme.bubble_ai_bg = custom_theme_config.bubble_ai_bg
+            self.config.appearance.custom_theme.bubble_ai_text = custom_theme_config.bubble_ai_text
+            
+            # 应用自定义颜色
+            if custom_theme_config.enabled:
+                theme_manager.apply_custom_colors(custom_theme_config)
+            else:
+                theme_manager.reset_custom_colors()
             
             # 保存到磁盘
             if hasattr(self.config, 'save'):

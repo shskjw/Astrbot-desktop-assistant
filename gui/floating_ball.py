@@ -232,11 +232,19 @@ class CompactChatWindow(QWidget):
         # 见 FloatingBallWindow.__init__ 中的 QTimer.singleShot(150, self._compact_window.reload_history_display)
         
     def _on_theme_changed(self, theme: Theme):
+        """主题切换时只更新样式，不重新加载历史"""
+        # 保存当前滚动位置
+        scrollbar = self._scroll_area.verticalScrollBar()
+        scroll_pos = scrollbar.value()
+        
         self._apply_theme()
+        
+        # 恢复滚动位置
+        QTimer.singleShot(50, lambda: scrollbar.setValue(scroll_pos))
         
     def _apply_theme(self):
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         # 容器
         self._container.setStyleSheet(f"""
@@ -512,7 +520,7 @@ class CompactChatWindow(QWidget):
         lbl.setWordWrap(True)
         lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         lbl.setStyleSheet(f"""
             QLabel {{
                 color: {c.bubble_user_text};
@@ -566,7 +574,7 @@ class CompactChatWindow(QWidget):
         avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         if self._user_avatar_pixmap and not self._user_avatar_pixmap.isNull():
             circular_avatar = self._create_circular_avatar(self._user_avatar_pixmap, 32)
@@ -598,7 +606,7 @@ class CompactChatWindow(QWidget):
         avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
             circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 32)
@@ -638,7 +646,7 @@ class CompactChatWindow(QWidget):
         avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
             circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 32)
@@ -677,7 +685,7 @@ class CompactChatWindow(QWidget):
         avatar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         if self._bot_avatar_pixmap and not self._bot_avatar_pixmap.isNull():
             circular_avatar = self._create_circular_avatar(self._bot_avatar_pixmap, 32)
@@ -846,7 +854,15 @@ class CompactChatWindow(QWidget):
         """处理历史记录加载完成信号
         
         当 ChatHistoryManager 完成文件加载时调用此方法。
+        注意：此方法只在初始化时或显式调用 load_from_file 后触发，
+        主题切换不会触发此方法。
         """
+        # 如果已经加载过且当前有显示内容，跳过重复加载
+        # 这可以防止某些意外情况下的重复加载
+        if self._history_loaded and self._displayed_message_ids:
+            print("[CompactChatWindow] 历史已加载且有显示内容，跳过重复加载")
+            return
+        
         print("[CompactChatWindow] 收到 history_loaded 信号，重新加载显示")
         
         # 重置加载状态以允许重新加载
@@ -1545,7 +1561,7 @@ class FloatingBallWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         theme = theme_manager.current_theme
-        colors = theme.colors
+        colors = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         # 计算缩放后的尺寸
         current_size = self.ball_size * self._scale_factor
@@ -1831,7 +1847,7 @@ class FloatingBallWindow(QWidget):
         
         # 应用主题样式
         t = theme_manager.current_theme
-        c = t.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         menu.setStyleSheet(f"""
             QMenu {{
                 background-color: {c.bg_primary};

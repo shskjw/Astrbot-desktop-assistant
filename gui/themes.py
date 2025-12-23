@@ -7,9 +7,13 @@
 - 主题切换
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional
+from dataclasses import dataclass, field, fields
+from typing import Dict, Optional, TYPE_CHECKING
 from enum import Enum
+import copy
+
+if TYPE_CHECKING:
+    from ..config import CustomThemeConfig
 
 
 class ThemeType(Enum):
@@ -329,22 +333,87 @@ class ThemeManager:
     _instance: Optional["ThemeManager"] = None
     _callbacks: list
     _current_theme: Theme
+    _custom_config: Optional["CustomThemeConfig"]
+    _effective_colors: Optional[ThemeColors]
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._current_theme = THEME_LIGHT_BLUE
             cls._instance._callbacks = []
+            cls._instance._custom_config = None
+            cls._instance._effective_colors = None
         return cls._instance
     
     @property
     def current_theme(self) -> Theme:
         return self._current_theme
     
+    def get_current_colors(self) -> ThemeColors:
+        """获取当前生效的颜色配置（应用了自定义颜色后的最终颜色）"""
+        if self._effective_colors is not None:
+            return self._effective_colors
+        return self._current_theme.colors
+    
+    def apply_custom_colors(self, custom_config: "CustomThemeConfig") -> None:
+        """应用自定义颜色配置
+        
+        Args:
+            custom_config: 自定义主题颜色配置对象
+        """
+        from ..config import CustomThemeConfig
+        
+        self._custom_config = custom_config
+        self._update_effective_colors()
+        self._notify_callbacks()
+    
+    def reset_custom_colors(self) -> None:
+        """清除自定义颜色并恢复主题默认"""
+        self._custom_config = None
+        self._effective_colors = None
+        self._notify_callbacks()
+    
+    def _update_effective_colors(self) -> None:
+        """更新生效的颜色配置"""
+        if self._custom_config is None or not self._custom_config.enabled:
+            self._effective_colors = None
+            return
+        
+        # 深拷贝当前主题的颜色作为基础
+        base_colors = copy.deepcopy(self._current_theme.colors)
+        
+        # 自定义颜色字段映射（CustomThemeConfig 字段名 -> ThemeColors 字段名）
+        color_mappings = {
+            'primary': 'primary',
+            'primary_light': 'primary_light',
+            'primary_dark': 'primary_dark',
+            'bg_primary': 'bg_primary',
+            'bg_secondary': 'bg_secondary',
+            'text_primary': 'text_primary',
+            'text_secondary': 'text_secondary',
+            'ball_bg': 'ball_bg',
+            'ball_glow': 'ball_glow',
+            'ball_border': 'ball_border',
+            'bubble_user_bg': 'bubble_user_bg',
+            'bubble_user_text': 'bubble_user_text',
+            'bubble_ai_bg': 'bubble_ai_bg',
+            'bubble_ai_text': 'bubble_ai_text',
+        }
+        
+        # 只覆盖非空字段
+        for custom_field, theme_field in color_mappings.items():
+            custom_value = getattr(self._custom_config, custom_field, '')
+            if custom_value:  # 非空字符串
+                setattr(base_colors, theme_field, custom_value)
+        
+        self._effective_colors = base_colors
+    
     def set_theme(self, theme_name: str) -> bool:
         """设置主题"""
         if theme_name in PRESET_THEMES:
             self._current_theme = PRESET_THEMES[theme_name]
+            # 主题切换后重新计算生效的颜色
+            self._update_effective_colors()
             self._notify_callbacks()
             return True
         return False
@@ -389,7 +458,7 @@ class ThemeManager:
     def get_floating_ball_style(self) -> str:
         """获取悬浮球样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             FloatingBallWindow {{
                 background: transparent;
@@ -399,7 +468,7 @@ class ThemeManager:
     def get_bubble_user_style(self) -> str:
         """获取用户消息气泡样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             MessageBubble {{
                 background-color: {c.bubble_user_bg};
@@ -419,7 +488,7 @@ class ThemeManager:
     def get_bubble_ai_style(self) -> str:
         """获取 AI 消息气泡样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             MessageBubble {{
                 background-color: {c.bubble_ai_bg};
@@ -440,7 +509,7 @@ class ThemeManager:
     def get_chat_window_style(self) -> str:
         """获取对话窗口样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             QMainWindow {{
                 background-color: {c.bg_secondary};
@@ -471,7 +540,7 @@ class ThemeManager:
     def get_input_area_style(self) -> str:
         """获取输入区域样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             QFrame {{
                 background-color: {c.bg_primary};
@@ -497,7 +566,7 @@ class ThemeManager:
     def get_send_button_style(self) -> str:
         """获取发送按钮样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             QPushButton {{
                 background-color: {c.primary};
@@ -523,7 +592,7 @@ class ThemeManager:
     def get_header_style(self) -> str:
         """获取标题栏样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             QFrame {{
                 background-color: {c.bg_primary};
@@ -538,7 +607,7 @@ class ThemeManager:
     def get_settings_window_style(self) -> str:
         """获取设置窗口样式"""
         t = self._current_theme
-        c = t.colors
+        c = self.get_current_colors()
         return f"""
             QDialog {{
                 background-color: {c.bg_primary};

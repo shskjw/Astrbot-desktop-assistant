@@ -70,7 +70,7 @@ class MarkdownLabel(QTextBrowser):
         确保即使 HTML 渲染有问题，文字颜色也能正确显示。
         """
         theme = theme_manager.current_theme
-        c = theme.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         # 根据角色确定文字颜色
         if self._role == "user":
@@ -216,7 +216,7 @@ class MarkdownUtils:
         """
         # 获取当前主题配置
         theme = theme_manager.current_theme
-        c = theme.colors
+        c = theme_manager.get_current_colors()  # 使用 get_current_colors() 获取应用了自定义颜色的最终配置
         
         # 确定基础颜色
         if role == "user":
