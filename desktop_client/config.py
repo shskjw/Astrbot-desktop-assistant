@@ -257,8 +257,17 @@ class ClientConfig:
         print(f"[DEBUG] 尝试加载配置文件: {path}")
         
         if not path.exists():
-            print(f"[DEBUG] 配置文件不存在，使用默认配置")
-            return cls()
+            print(f"[DEBUG] 配置文件不存在，创建默认配置文件: {path}")
+            # 创建默认配置并保存
+            default_config = cls()
+            # 确保配置目录存在
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # 保存默认配置到文件
+            if default_config.save(str(path)):
+                print(f"[DEBUG] 默认配置文件已创建: {path}")
+            else:
+                print(f"[WARNING] 无法创建默认配置文件: {path}")
+            return default_config
         
         try:
             with open(path, 'r', encoding='utf-8') as f:

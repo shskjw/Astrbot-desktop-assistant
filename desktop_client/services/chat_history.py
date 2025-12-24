@@ -388,10 +388,27 @@ class ChatHistoryManager(QObject):
         load_path = path or self._history_path
         
         if not os.path.exists(load_path):
-            print(f"[ChatHistory] 聊天记录文件不存在: {load_path}，将使用空历史记录")
+            print(f"[ChatHistory] 聊天记录文件不存在: {load_path}，创建空历史记录文件")
             self._messages = []
             self._dirty = False
-            # 即使文件不存在，也发射信号通知UI可以开始显示（空列表）
+            
+            # 自动创建空的聊天记录文件
+            try:
+                # 确保目录存在
+                Path(load_path).parent.mkdir(parents=True, exist_ok=True)
+                
+                # 创建空的聊天记录文件
+                initial_data = {
+                    'version': 1,
+                    'messages': []
+                }
+                with open(load_path, 'w', encoding='utf-8') as f:
+                    json.dump(initial_data, f, ensure_ascii=False, indent=2)
+                print(f"[ChatHistory] 空历史记录文件已创建: {load_path}")
+            except Exception as e:
+                print(f"[ChatHistory] 创建空历史记录文件失败: {e}")
+            
+            # 发射信号通知UI可以开始显示（空列表）
             self.history_loaded.emit()
             return True  # 不视为错误，只是没有历史记录
         
