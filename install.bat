@@ -163,12 +163,12 @@ if %ERRORLEVEL% NEQ 0 (
     :: 核心依赖列表
     for %%D in (
         "PySide6>=6.5.0"
-        "qasync>=0.24.0"
-        "httpx>=0.25.0"
-        "websockets>=11.0"
-        "Pillow>=10.0.0"
+        "qasync>=0.27.1"
+        "httpx[http2]>=0.24.0"
+        "websockets>=11.0.0"
+        "Pillow>=9.0.0"
         "mss>=9.0.0"
-        "pynput>=1.7.6"
+        "pynput>=1.7.0"
     ) do (
         echo   安装 %%~D...
         "!PYTHON_CMD!" -m pip install %%~D -q 2>nul

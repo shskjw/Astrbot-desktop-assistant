@@ -146,7 +146,7 @@ install_dependencies() {
         echo -e "${YELLOW}⚠ 部分依赖安装失败，尝试逐个安装...${NC}"
         
         # 核心依赖列表
-        for dep in "PySide6>=6.5.0" "qasync>=0.24.0" "httpx>=0.25.0" "websockets>=11.0" "Pillow>=10.0.0" "mss>=9.0.0" "pynput>=1.7.6"; do
+        for dep in "PySide6>=6.5.0" "qasync>=0.27.1" "httpx[http2]>=0.24.0" "websockets>=11.0.0" "Pillow>=9.0.0" "mss>=9.0.0" "pynput>=1.7.0"; do
             echo "  安装 $dep..."
             "$PYTHON_CMD" -m pip install "$dep" -q 2>/dev/null
         done
