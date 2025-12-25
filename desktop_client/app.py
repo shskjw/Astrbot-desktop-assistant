@@ -274,9 +274,12 @@ class DesktopClientApp(QObject):
     
     async def _start_websocket_connection(self):
         """启动 WebSocket 连接（用于接收服务端下发的命令）"""
-        if not self.config.session_id:
-            print("[DEBUG] 未设置 session_id，跳过 WebSocket 连接")
-            return
+        # 使用配置中的 session_id，如果为空则生成一个临时的
+        session_id = self.config.session_id
+        if not session_id:
+            import uuid
+            session_id = f"desktop_{uuid.uuid4().hex[:8]}"
+            print(f"[DEBUG] 未设置 session_id，使用临时 ID: {session_id}")
         
         try:
             # 定义远程命令处理回调
@@ -288,17 +291,31 @@ class DesktopClientApp(QObject):
             
             # 启动 WebSocket 客户端，同时传入消息和命令处理回调
             # 注意：使用配置中的 ws_port 连接独立的 WebSocket 服务器（默认端口 6190）
+            print(f"[DEBUG] 启动 WebSocket 连接:")
+            print(f"  - 服务器: {self.config.server.url}")
+            print(f"  - WS 端口: {self.config.server.ws_port}")
+            print(f"  - Session ID: {session_id}")
+            
             await self._bridge.api_client.start_websocket(
-                session_id=self.config.session_id,
+                session_id=session_id,
                 on_message=self._on_websocket_message,
                 on_command=on_remote_command,
                 ws_port=self.config.server.ws_port
             )
             
-            print("[DEBUG] WebSocket 连接已建立，可接收远程命令")
+            print("[DEBUG] WebSocket 连接启动成功，可接收远程命令")
             
         except Exception as e:
             print(f"[WARNING] 启动 WebSocket 连接失败: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # 启动一个延时重试任务
+            print("[DEBUG] 5秒后重试启动 WebSocket 连接...")
+            asyncio.get_event_loop().call_later(
+                5,
+                lambda: asyncio.ensure_future(self._start_websocket_connection())
+            )
     
     def _on_websocket_message(self, data: dict):
         """处理 WebSocket 消息"""

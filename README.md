@@ -1,142 +1,163 @@
-# 🖥️ AstrBot 桌面助手客户端 (Desktop Client)
+# 🎈 AstrBot 桌面助手 —— 你的桌面 AI 陪伴
+
+<div align="center">
 
 [![CI](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/ci.yml)
-[![Release](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/release.yml/badge.svg)](https://github.com/muyouzhi6/Astrbot-desktop-assistant/actions/workflows/release.yml)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.5%2B-green)](https://wiki.qt.io/Qt_for_Python)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-基于 PySide6 构建的 AstrBot 轻量级桌面客户端，采用"悬浮球 + 对话窗口"的统一交互设计，提供流畅的桌面 AI 体验。
+**一个安静陪伴你的桌面悬浮球，随时可聊、随时可见**
 
-> ⚠️ **注意**：本项目需配合服务端插件 [astrbot_plugin_desktop_assistant](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant) 使用。
+[⚡ 快速安装](#-快速安装) · [✨ 核心功能](#-核心功能) · [🔌 附加能力](#-附加能力qq-远程功能) · [🍎 平台说明](#-平台特别说明)
+
+</div>
+
+---
+
+## 🌈 为什么选择桌面助手？
+
+想象一下，有一个 AI 伙伴：
+
+- 🎈 **随时可见** —— 一个小巧的悬浮球，安静地待在你的桌面角落
+- 💬 **随时可聊** —— 点一下就能对话，不需要打开任何网页或 App
+- 👀 **能看懂你的屏幕** —— 遇到报错？让它帮你分析，不用复制粘贴
+- 🤗 **主动关心你** —— 发现你长时间工作，会温柔提醒你休息
+
+这不只是一个工具，而是一个**陪伴**。
+
+---
+
+## 🎈 悬浮球：你的桌面 AI 伙伴
+
+<div align="center">
+
+```
+     ╭──────────────────────────────────╮
+     │                                  │
+     │    🟢  ← 悬浮球：你的 AI 伙伴     │
+     │                                  │
+     │    点击即可对话                   │
+     │    它能看懂你的屏幕               │
+     │    它会主动关心你                 │
+     │                                  │
+     ╰──────────────────────────────────╯
+```
+
+</div>
+
+### 悬浮球的独特之处
+
+| 特点 | 传统 AI 聊天 | 桌面悬浮球 |
+|------|-------------|-----------|
+| **存在感** | 需要打开网页/App | 始终在桌面陪伴你 |
+| **交互方式** | 主动去找它 | 它就在那里，点一下即可 |
+| **屏幕理解** | 需要复制粘贴 | 直接"看懂"你的屏幕 |
+| **主动性** | 只会被动回答 | 会主动关心你的状态 |
+| **情感连接** | 冷冰冰的工具 | 温暖的陪伴感 |
+
+---
 
 ## ✨ 核心功能
 
-### 🎈 智能悬浮球
-- **灵动交互**：支持拖拽停靠，双击唤起对话，右键快捷菜单。
-- **状态感知**：呼吸灯效提示消息接收与处理状态。
-- **消息气泡**：单击快速预览最新消息回复。
+### 💬 随时对话
 
-### 💬 沉浸式对话窗口
-- **富文本支持**：完整支持 Markdown 渲染（代码高亮、公式、表格）。
-- **多模态输入**：
-  - **图片/文件**：支持直接拖拽或粘贴发送。
-  - **语音交互**：支持语音消息自动播放。
-- **便捷操作**：支持快捷键发送（Enter/Shift+Enter）、图片缩放预览。
+点击悬浮球，打开对话窗口，和你的 AI 伙伴聊天。
 
-### ⚙️ 系统集成
-- **系统托盘**：后台常驻，支持开机自启。
-- **全局热键**：支持自定义快捷键唤起。
-- **主题适配**：亮色/暗色模式自动切换。
-
-### 📷 远程截图功能 (新功能)
-通过 QQ/NapCat (OneBot11 协议) 远程控制桌面端进行截图：
-- 在 QQ 中发送 `/screenshot` 或 `/截图` 命令
-- 桌面客户端自动截取屏幕并返回图片到 QQ
-- 支持查看桌面客户端在线状态
-
-## 🚀 快速开始
-
-### 1. 安装服务端插件
-请确保 AstrBot 服务端已安装配套插件：
-```bash
-git clone https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant.git data/plugins/astrbot_plugin_desktop_assistant
+```
+你：今天有点累...
+AI：我注意到你已经连续工作了 3 个小时了呢，要不要站起来活动一下？
+    我可以帮你设置一个 10 分钟后的提醒 ☕
 ```
 
-### 2. 安装客户端
+**沉浸式对话体验**：
+- 📝 完整 Markdown 渲染（代码高亮、公式、表格）
+- 🖼️ 图片/文件拖拽发送
+- 🔊 语音消息自动播放
+- ⌨️ 快捷键发送（Enter/Shift+Enter）
 
-#### 🌟 方式一：一键下载部署（推荐国内新手用户）
+### 👀 屏幕感知
 
-> 🚀 **一键脚本特点**：自动检测最快的 GitHub 加速代理、下载项目、安装依赖、配置开机自启、创建桌面快捷方式。
+AI 能"看到"你屏幕上的内容，帮你分析问题。
 
-**Windows 用户（推荐）：**
+```
+（你遇到一个代码报错）
+你：帮我看看这个报错
+AI：我看到了，这是一个 NullPointerException。
+    问题出在第 42 行，userService 没有被正确初始化。
+    你可以在调用前加上空值检查，或者检查依赖注入配置...
+```
 
-打开 **PowerShell**（Win + X，选择 Windows Terminal 或 PowerShell），复制粘贴以下命令后回车：
+### 🤗 主动交互
+
+AI 会根据屏幕内容，在合适的时机主动给你建议。
+
+```
+（你在浏览技术文章）
+AI：这篇关于 Rust 异步编程的文章不错！
+    需要我帮你总结一下关键点吗？
+
+（你长时间盯着代码发呆）
+AI：看起来遇到了难题？要不要说说你的思路，
+    我帮你梳理一下？
+```
+
+### 🚀 持续进化
+
+悬浮球是一个可扩展的能力平台，支持插件扩展：
+
+- 🔌 插件系统支持自定义扩展
+- 🎨 主题自适应（亮色/暗色自动切换）
+- ⚡ 全局热键快速唤起
+- 🖥️ 系统托盘后台常驻
+
+---
+
+## ⚡ 快速安装
+
+### 前置条件
+
+- ✅ AstrBot 服务端已部署并运行
+- ✅ 已安装服务端插件 [astrbot_plugin_desktop_assistant](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant)
+
+### 🌟 方式一：一键安装（推荐）
+
+> 🚀 自动检测最快的下载源、安装依赖、配置开机自启、创建桌面快捷方式
+
+**Windows 用户**：
+
+打开 **PowerShell**（Win + X，选择 Windows Terminal），运行：
 
 ```powershell
 irm "https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.bat" -OutFile "$env:TEMP\quick_install.bat"; Start-Process "$env:TEMP\quick_install.bat"
 ```
 
-> 💡 **也可以手动下载**：<a href="https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.bat" download="quick_install.bat">点击下载 quick_install.bat</a>（右键另存为），然后双击运行。
+💡 也可以 [下载 quick_install.bat](https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.bat)，双击运行。
 
-**macOS / Linux 用户（推荐）：**
+**macOS / Linux 用户**：
 
-打开 **终端**，复制粘贴以下命令后回车：
+打开终端，运行：
 
 ```bash
 curl -fsSL https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.sh | bash
 ```
 
-> 💡 **也可以手动下载**：<a href="https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.sh" download="quick_install.sh">点击下载 quick_install.sh</a>（右键另存为），然后在终端运行 `chmod +x quick_install.sh && ./quick_install.sh`。
+💡 也可以 [下载 quick_install.sh](https://gh.llkk.cc/https://raw.githubusercontent.com/muyouzhi6/Astrbot-desktop-assistant/main/quick_install.sh)，然后运行 `chmod +x quick_install.sh && ./quick_install.sh`。
 
-> 💡 **GitHub 加速说明**：脚本会自动测试以下加速代理并选择最快的：
-> - `https://gh.llkk.cc`
-> - `https://gh-proxy.com`
-> - `https://mirror.ghproxy.com`
-> - `https://ghproxy.net`
->
-> 您也可以选择不使用加速，直接从 GitHub 下载。
-
-#### 方式二：本地一键部署（已克隆项目）
-
-如果已经克隆了项目到本地：
-
-**Windows 用户：**
-```bash
-# 克隆项目
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# 双击 install.bat 或在命令行运行
-install.bat
-```
-
-**macOS / Linux 用户：**
-```bash
-# 克隆项目
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# 授予执行权限并运行
-chmod +x install.sh
-./install.sh
-```
-
-安装完成后，可以通过以下方式启动：
-- 🖱️ 双击桌面快捷方式
-- 📟 运行 `start.bat`（Windows）或 `./start.sh`（macOS/Linux）
-- ⌨️ 命令行：`python -m desktop_client`
-
-#### 方式三：快速启动（已有 Python 环境）
-
-**Windows 用户：**
-```bash
-# 克隆项目后，双击 start.bat 即可启动
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-```
-
-**macOS 用户：**
-```bash
-# 克隆项目后，双击 start.command 即可启动
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-
-# 如果双击无法运行，请先授予执行权限
-chmod +x start.command
-```
-
-**Linux 用户：**
-```bash
-git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
-cd Astrbot-desktop-assistant
-chmod +x start.sh
-./start.sh
-```
-
-#### 方式四：手动安装
+### 方式二：克隆后安装
 
 ```bash
 # 克隆项目
+git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
+cd Astrbot-desktop-assistant
+
+# Windows：双击 install.bat
+# macOS/Linux：chmod +x install.sh && ./install.sh
+```
+
+### 方式三：手动安装
+
+```bash
 git clone https://github.com/muyouzhi6/Astrbot-desktop-assistant.git
 cd Astrbot-desktop-assistant
 
@@ -147,69 +168,95 @@ source venv/bin/activate  # Linux/macOS
 
 # 安装依赖
 pip install -r requirements.txt
-```
 
-### 3. 运行
-```bash
+# 启动
 python -m desktop_client
 ```
-首次运行需在设置中配置 AstrBot 服务器地址及账号信息。
 
-### 4. 开机自启配置
+### 连接服务端
 
-#### 自动配置（推荐）
-使用一键部署脚本 `install.bat` 或 `install.sh` 时，会提示是否配置开机自启。
+首次启动后：
 
-#### 手动配置
-也可以在应用内设置：
-1. 右键点击悬浮球或系统托盘图标
-2. 选择「设置」
-3. 在「通用设置」中勾选「开机自启动」
+1. 右键悬浮球 → 选择「设置」
+2. 填写服务器地址：
+   - 本地部署：`http://127.0.0.1:6185`
+   - 远程服务器：`http://你的服务器IP:6185`
+3. 填写用户名密码（AstrBot 管理员账号）
 4. 保存设置
 
-#### 故障排查
-如果开机自启不生效：
+点击悬浮球，说一声"你好"，你的桌面 AI 伙伴已经准备好了 🎉
 
-**Windows：**
-- 检查注册表：`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 是否有 `AstrBotDesktopClient` 项
-- 查看配置目录下的 `autostart_info.txt` 和 `autostart_error.log`
+---
 
-**macOS：**
-- 检查 `~/Library/LaunchAgents/com.astrbot.desktop-assistant.plist` 是否存在
-- 运行 `launchctl list | grep astrbot` 查看服务状态
+## 🔌 附加能力：QQ 远程功能
 
-**Linux：**
-- 检查 `~/.config/autostart/astrbot-desktop-assistant.desktop` 是否存在
+> 🎁 **锦上添花**：如果你已经在用 AstrBot + NapCat，还可以解锁 QQ 远程能力
 
-## 🍎 macOS 特别说明
+除了桌面陪伴，你还可以通过 QQ 远程控制和查看电脑：
 
-### 系统要求
-- macOS 10.14 (Mojave) 或更高版本
-- Python 3.10+（推荐使用 Homebrew 安装：`brew install python@3.11`）
+### 远程截图
 
-### 悬浮球置顶功能
-macOS 版本自动安装 `pyobjc-framework-Cocoa` 以实现窗口置顶功能。如果悬浮球无法正常置顶，请确保：
-1. 依赖已正确安装：`pip install pyobjc-framework-Cocoa`
-2. 授予应用必要的系统权限
+在 QQ 上发送命令，获取电脑实时画面：
 
-### 常见问题
+| 命令 | 功能 |
+|------|------|
+| `.截图` 或 `.screenshot` | 截取桌面屏幕并返回图片 |
+| `.桌面状态` | 查看桌面客户端连接状态 |
 
-**Q: 启动脚本双击无反应？**
-```bash
-# 在终端中授予执行权限
-chmod +x start.command
+### 使用场景
+
+- 出门在外，想看看电脑上的下载进度
+- 在 QQ 群里让 bot 帮你分析屏幕上的报错
+- 远程查看家里电脑的状态
+
+```
+你（在 QQ 上）：.截图
+Bot：[返回你电脑的实时截图]
+
+你：帮我看看这个报错是什么问题
+Bot：根据截图，你的代码第 42 行有个 NullPointerException...
 ```
 
-**Q: 依赖安装失败？**
+### 远程功能配置
+
+需要正确配置 WebSocket 连接：
+
+1. 确保服务端插件已启用
+2. 在客户端设置中配置 WebSocket 端口（默认 6190）
+3. 开放服务器防火墙端口 6190
+
 ```bash
-# 确保 Xcode 命令行工具已安装
-xcode-select --install
+# Linux (firewalld)
+sudo firewall-cmd --add-port=6190/tcp --permanent
+sudo firewall-cmd --reload
+
+# Linux (ufw)
+sudo ufw allow 6190/tcp
 ```
 
-## 🐧 Linux 特别说明
+详细配置请参阅 [服务端插件文档](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant#-附加能力qq-远程功能)。
 
-### 系统依赖
-部分 Linux 发行版可能需要安装 Qt 相关依赖：
+---
+
+## 🍎 平台特别说明
+
+### macOS
+
+**系统要求**：macOS 10.14+ / Python 3.10+
+
+**悬浮球置顶**：自动安装 `pyobjc-framework-Cocoa` 实现窗口置顶。
+
+**常见问题**：
+
+| 问题 | 解决方案 |
+|------|----------|
+| 启动脚本双击无反应 | `chmod +x start.command` |
+| 依赖安装失败 | `xcode-select --install` |
+
+### Linux
+
+**系统依赖**：
+
 ```bash
 # Ubuntu/Debian
 sudo apt install libgl1-mesa-glx libxcb-xinerama0 libxcb-cursor0 libegl1
@@ -218,31 +265,57 @@ sudo apt install libgl1-mesa-glx libxcb-xinerama0 libxcb-cursor0 libegl1
 sudo dnf install mesa-libGL libxcb
 ```
 
-### Wayland 支持
-如果在 Wayland 环境下运行，启动脚本会自动设置 `QT_QPA_PLATFORM=wayland;xcb`。
+**Wayland 支持**：启动脚本自动设置 `QT_QPA_PLATFORM=wayland;xcb`。
+
+### Windows
+
+开箱即用，无特殊依赖。
+
+---
+
+## ⚙️ 开机自启配置
+
+### 自动配置（推荐）
+
+使用一键安装脚本时会提示配置开机自启。
+
+### 手动配置
+
+1. 右键悬浮球或系统托盘 → 选择「设置」
+2. 在「通用设置」中勾选「开机自启动」
+3. 保存设置
+
+### 故障排查
+
+| 平台 | 检查方法 |
+|------|----------|
+| Windows | 注册表 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` |
+| macOS | `launchctl list \| grep astrbot` |
+| Linux | `~/.config/autostart/astrbot-desktop-assistant.desktop` |
+
+---
 
 ## 📦 目录结构
+
 ```
 desktop_client/
-├── gui/                 # 界面组件 (悬浮球, 聊天窗口, 设置等)
-├── handlers/            # 消息处理器 (消息, 截图, 主动对话, 媒体)
-├── platforms/           # 平台适配器 (Windows, macOS, Linux)
-├── services/            # 核心服务 (API通信, 截图, 桌面监控)
-├── controllers/         # 控制器 (设置管理)
-├── utils/               # 工具类
-├── config.py            # 配置管理
-├── bridge.py            # 消息桥接层
-├── api_client.py        # API 客户端
-└── main.py              # 程序入口
+├── gui/          # 界面组件（悬浮球、聊天窗口、设置）
+├── handlers/     # 消息处理器（消息、截图、主动对话）
+├── platforms/    # 平台适配器（Windows/macOS/Linux）
+├── services/     # 核心服务（API通信、截图、桌面监控）
+├── plugins/      # 插件系统
+├── config.py     # 配置管理
+├── bridge.py     # 消息桥接层
+└── main.py       # 程序入口
 ```
 
 详细架构说明请参阅 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+---
+
 ## 🤝 参与贡献
 
-我们欢迎任何形式的贡献！无论是报告 Bug、提出新功能建议，还是直接提交代码。
-
-### 快速开始
+我们欢迎任何形式的贡献！
 
 ```bash
 # Fork 并克隆项目
@@ -252,41 +325,42 @@ cd Astrbot-desktop-assistant
 # 创建虚拟环境
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
-# 或 venv\Scripts\activate  # Windows
 
-# 安装依赖
+# 安装依赖并运行测试
 pip install -r requirements.txt
-
-# 运行测试
 pytest
 ```
 
-### 贡献指南
-
-- 📖 [贡献指南](CONTRIBUTING.md) - 开发环境搭建、代码规范、Git 工作流
-- 🏗️ [架构文档](docs/ARCHITECTURE.md) - 项目结构、设计模式、模块说明
-- 🐛 [报告 Bug](.github/ISSUE_TEMPLATE/bug_report.md) - 使用 Issue 模板报告问题
-- ✨ [功能请求](.github/ISSUE_TEMPLATE/feature_request.md) - 提出新功能建议
-
-### 开发者资源
-
 | 资源 | 说明 |
 |------|------|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 完整的贡献指南 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计文档 |
-| [tests/](tests/) | 测试用例目录 |
-
-## 📄 许可证
-本项目采用 MIT 许可证。
-
-## 🙏 致谢
-
-感谢所有为本项目做出贡献的开发者！
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构文档 |
+| [Issue 模板](.github/ISSUE_TEMPLATE/) | 报告 Bug / 功能请求 |
 
 ---
 
-<p align="center">
-  <a href="https://github.com/muyouzhi6/Astrbot-desktop-assistant/issues">报告问题</a> •
-  <a href="https://github.com/muyouzhi6/Astrbot-desktop-assistant/discussions">参与讨论</a> •
-  <a href="CONTRIBUTING.md">参与贡献</a>
-</p>
+## 🔗 相关链接
+
+| 资源 | 链接 |
+|------|------|
+| 🔌 服务端插件 | [astrbot_plugin_desktop_assistant](https://github.com/muyouzhi6/astrbot_plugin_desktop_assistant) |
+| 🔊 TTS 语音插件 | [astrbot_plugin_tts_emotion_router](https://github.com/muyouzhi6/astrbot_plugin_tts_emotion_router) |
+| 🤖 AstrBot 主项目 | [AstrBot](https://github.com/Soulter/AstrBot) |
+
+---
+
+## 📄 许可证
+
+MIT License
+
+---
+
+<div align="center">
+
+**不只是工具，而是陪伴**
+
+*桌面悬浮球 —— 让 AI 真正成为你的伙伴*
+
+[报告问题](https://github.com/muyouzhi6/Astrbot-desktop-assistant/issues) · [参与讨论](https://github.com/muyouzhi6/Astrbot-desktop-assistant/discussions) · [参与贡献](CONTRIBUTING.md)
+
+</div>

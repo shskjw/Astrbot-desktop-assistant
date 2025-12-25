@@ -59,18 +59,45 @@ class WebSocketClient:
         on_command: Optional[Callable[[str, str, dict], Any]] = None,
         ws_port: Optional[int] = None
     ):
-        # 解析服务器 URL，提取 host
+        """
+        初始化 WebSocket 客户端
+
+        Args:
+            ws_port: WebSocket 服务端口。
+                     - 如果指定了端口（如 6190），将连接到该独立端口
+                     - 如果为 None，将复用 API 端口（统一端口模式）
+        """
+        # 解析服务器 URL，提取 host 和 port
         from urllib.parse import urlparse
         parsed = urlparse(server_url)
         host = parsed.hostname or "localhost"
         scheme = "wss" if parsed.scheme == "https" else "ws"
         
-        # 使用独立的 WebSocket 端口（默认 6190）
-        port = ws_port or 6190
+        # 获取 API 端口
+        api_port = parsed.port
+        if not api_port:
+            api_port = 443 if parsed.scheme == "https" else 80
+            
+        # 端口选择逻辑：
+        # - 如果显式指定了 ws_port，使用指定的端口（独立端口模式）
+        # - 否则复用 API 端口（统一端口模式）
+        if ws_port is not None:
+            port = ws_port
+            print(f"[WebSocket] 使用独立端口模式: {port}")
+        else:
+            port = api_port
+            print(f"[WebSocket] 使用统一端口模式 (复用 API 端口): {port}")
         
-        # 构建 WebSocket URL（连接到独立 WS 服务器）
+        # 构建 WebSocket URL
         self.url = f"{scheme}://{host}:{port}/ws/client?token={token}&session_id={session_id}"
         self.session_id = session_id
+        
+        # 详细日志：帮助调试连接问题
+        print(f"[WebSocket] 初始化:")
+        print(f"  - 源 server_url: {server_url}")
+        print(f"  - 解析 host: {host}")
+        print(f"  - 目标端口: {port}")
+        print(f"  - 最终 URL: {self.url}")
         
         self.on_message = on_message
         self.on_command = on_command  # 命令处理回调: (command, request_id, params) -> result
@@ -156,9 +183,16 @@ class WebSocketClient:
                             print(f"处理消息出错: {e}")
                             
             except (websockets.ConnectionClosed, ConnectionRefusedError) as e:
-                print(f"WebSocket 连接断开/失败: {e}")
+                print(f"[WebSocket] 连接断开/失败: {e}")
+                print(f"  - 目标 URL: {self.url}")
+                print(f"  - 检查步骤:")
+                print(f"    1. 确保 AstrBot 服务器已启动")
+                print(f"    2. 确保桌面助手插件已启用")
+                print(f"    3. 如果是远程连接，确保防火墙已开放 WebSocket 端口")
             except Exception as e:
-                print(f"WebSocket 异常: {e}")
+                print(f"[WebSocket] 异常: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 self.ws = None
                 if self._heartbeat_task:
@@ -553,7 +587,9 @@ class AstrBotApiClient:
             session_id: 会话 ID
             on_message: 消息处理回调，接收 dict 类型消息
             on_command: 命令处理回调，接收 (command, request_id, params)，返回执行结果
-            ws_port: WebSocket 服务端口（默认 6190，独立 WS 服务器）
+            ws_port: WebSocket 服务端口。
+                     - 如果指定（如 6190），将连接到该独立端口
+                     - 如果为 None，将复用 API 端口
         """
         if not self.token:
             print("启动 WebSocket 失败: 未登录")
