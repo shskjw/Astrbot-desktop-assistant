@@ -126,11 +126,21 @@ class VoiceConfig:
     auto_play_voice: bool = False
 
 
+# 缓存配置目录路径，避免重复计算
+_cached_config_dir: Optional[Path] = None
+
+
 def _get_config_dir_internal() -> Path:
     """获取配置目录的内部实现函数
     
-    供 StorageConfig 使用，避免循环引用
+    供 StorageConfig 使用，避免循环引用。
+    使用缓存避免重复的目录检测和创建操作。
     """
+    global _cached_config_dir
+    
+    if _cached_config_dir is not None:
+        return _cached_config_dir
+    
     import sys
     
     config_dir = None
@@ -161,14 +171,17 @@ def _get_config_dir_internal() -> Path:
         test_file = config_dir / '.write_test'
         test_file.touch()
         test_file.unlink()
+        _cached_config_dir = config_dir
         return config_dir
     except (PermissionError, OSError):
         try:
             fallback_dir.mkdir(parents=True, exist_ok=True)
+            _cached_config_dir = fallback_dir
             return fallback_dir
         except Exception:
             cwd_config = Path.cwd() / 'config'
             cwd_config.mkdir(parents=True, exist_ok=True)
+            _cached_config_dir = cwd_config
             return cwd_config
 
 
@@ -279,59 +292,10 @@ class ClientConfig:
         - Linux: ~/.config/astrbot-desktop-client
         
         如果创建失败，回退到项目目录下的 config 文件夹
+        
+        注意：复用 _get_config_dir_internal() 避免代码重复
         """
-        import sys
-        
-        config_dir = None
-        fallback_dir = None
-        
-        # 计算回退目录（项目目录下的 config 文件夹）
-        try:
-            # 尝试获取项目根目录
-            if getattr(sys, 'frozen', False):
-                # 打包后的可执行文件
-                project_root = Path(sys.executable).parent
-            else:
-                # 开发模式：desktop_client 的父目录
-                project_root = Path(__file__).parent.parent
-            fallback_dir = project_root / 'config'
-        except Exception:
-            fallback_dir = Path.cwd() / 'config'
-        
-        # 根据操作系统确定首选配置目录
-        if os.name == 'nt':
-            # Windows: %APPDATA%/AstrBotDesktopClient
-            base = os.environ.get('APPDATA', os.path.expanduser('~'))
-            config_dir = Path(base) / 'AstrBotDesktopClient'
-        elif sys.platform == 'darwin':
-            # macOS: ~/Library/Application Support/AstrBotDesktopClient
-            config_dir = Path.home() / 'Library' / 'Application Support' / 'AstrBotDesktopClient'
-        else:
-            # Linux: ~/.config/astrbot-desktop-client
-            config_dir = Path.home() / '.config' / 'astrbot-desktop-client'
-        
-        # 尝试创建首选目录
-        try:
-            config_dir.mkdir(parents=True, exist_ok=True)
-            # 测试是否可写
-            test_file = config_dir / '.write_test'
-            test_file.touch()
-            test_file.unlink()
-            return config_dir
-        except (PermissionError, OSError) as e:
-            print(f"[WARNING] 无法创建配置目录 {config_dir}: {e}")
-            print(f"[INFO] 使用回退目录: {fallback_dir}")
-            
-            # 使用回退目录
-            try:
-                fallback_dir.mkdir(parents=True, exist_ok=True)
-                return fallback_dir
-            except Exception as fallback_error:
-                print(f"[ERROR] 回退目录也无法创建: {fallback_error}")
-                # 最后的回退：当前工作目录
-                cwd_config = Path.cwd() / 'config'
-                cwd_config.mkdir(parents=True, exist_ok=True)
-                return cwd_config
+        return _get_config_dir_internal()
     
     @classmethod
     def get_config_path(cls) -> Path:

@@ -312,7 +312,7 @@ class DesktopClientApp(QObject):
             
             # 启动一个延时重试任务
             print("[DEBUG] 5秒后重试启动 WebSocket 连接...")
-            asyncio.get_event_loop().call_later(
+            asyncio.get_running_loop().call_later(
                 5,
                 lambda: asyncio.ensure_future(self._start_websocket_connection())
             )
