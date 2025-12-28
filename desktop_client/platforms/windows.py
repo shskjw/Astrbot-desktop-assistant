@@ -235,22 +235,22 @@ class WindowsPlatformAdapter(IPlatformAdapter):
         config_dir = ClientConfig.get_config_dir()
         config_dir_str = str(config_dir).replace('\\', '\\\\')
         
-        # VBS 脚本内容
-        # 添加 --autostart 参数，让应用知道这是开机自启，可以使用更长的启动延迟
-        # 添加详细的错误处理和日志记录
+        # VBS script content
+        # Add --autostart parameter to let the app know this is autostart, allowing longer startup delay
+        # Add detailed error handling and logging
         vbs_content = f'''
-' AstrBot Desktop Assistant 开机自启脚本
-' 自动生成，请勿手动修改
+' AstrBot Desktop Assistant Autostart Script
+' Auto-generated, do not modify manually
 
 On Error Resume Next
 
 Set WshShell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-' 配置目录（用于日志）
+' Config directory (for logging)
 configDir = "{config_dir_str}"
 
-' 创建日志函数
+' Create logging function
 Sub WriteLog(message)
     On Error Resume Next
     logPath = configDir & "\\autostart.log"
@@ -259,98 +259,98 @@ Sub WriteLog(message)
     logFile.Close
 End Sub
 
-WriteLog "========== 开机自启脚本开始执行 =========="
+WriteLog "========== Autostart script started =========="
 
-' 设置工作目录
+' Set working directory
 projectRoot = "{project_root_str}"
 pythonPath = "{python_path_str}"
 
-WriteLog "配置的项目根目录: " & projectRoot
-WriteLog "配置的 Python 路径: " & pythonPath
+WriteLog "Configured project root: " & projectRoot
+WriteLog "Configured Python path: " & pythonPath
 
-' 检查 Python 是否存在
+' Check if Python exists
 If Not fso.FileExists(pythonPath) Then
-    WriteLog "错误: Python 解释器不存在: " & pythonPath
-    ' 尝试查找 pythonw.exe
+    WriteLog "Error: Python interpreter not found: " & pythonPath
+    ' Try to find pythonw.exe
     pythonDir = fso.GetParentFolderName(pythonPath)
     altPython = pythonDir & "\\pythonw.exe"
     If fso.FileExists(altPython) Then
         pythonPath = altPython
-        WriteLog "使用替代 Python: " & pythonPath
+        WriteLog "Using alternative Python: " & pythonPath
     Else
         altPython = pythonDir & "\\python.exe"
         If fso.FileExists(altPython) Then
             pythonPath = altPython
-            WriteLog "使用替代 Python: " & pythonPath
+            WriteLog "Using alternative Python: " & pythonPath
         Else
-            WriteLog "错误: 无法找到任何 Python 解释器"
+            WriteLog "Error: Cannot find any Python interpreter"
             WScript.Quit 1
         End If
     End If
 End If
 
-' 检查项目目录是否存在
+' Check if project directory exists
 If Not fso.FolderExists(projectRoot) Then
-    WriteLog "警告: 项目根目录不存在: " & projectRoot
+    WriteLog "Warning: Project root does not exist: " & projectRoot
     
-    ' 尝试使用脚本所在目录推断
+    ' Try to infer from script location
     scriptPath = WScript.ScriptFullName
     scriptDir = fso.GetParentFolderName(scriptPath)
-    WriteLog "脚本所在目录: " & scriptDir
+    WriteLog "Script directory: " & scriptDir
     
-    ' 配置目录的父目录可能是项目根目录
+    ' Parent of config directory might be project root
     parentDir = fso.GetParentFolderName(scriptDir)
     If fso.FolderExists(parentDir & "\\desktop_client") Then
         projectRoot = parentDir
-        WriteLog "使用推断的项目根目录: " & projectRoot
+        WriteLog "Using inferred project root: " & projectRoot
     Else
-        ' 尝试从 Python 路径推断（虚拟环境场景）
+        ' Try to infer from Python path (venv scenario)
         pythonDir = fso.GetParentFolderName(pythonPath)
-        ' 虚拟环境通常在项目目录下的 .venv 或 venv 目录
+        ' Virtual env is usually in .venv or venv under project dir
         venvParent = fso.GetParentFolderName(pythonDir)
         If fso.FolderExists(venvParent & "\\desktop_client") Then
             projectRoot = venvParent
-            WriteLog "从虚拟环境推断项目根目录: " & projectRoot
+            WriteLog "Inferred project root from venv: " & projectRoot
         End If
     End If
 End If
 
-' 再次检查项目目录
+' Check project directory again
 If Not fso.FolderExists(projectRoot) Then
-    WriteLog "错误: 无法确定项目根目录，退出"
+    WriteLog "Error: Cannot determine project root, exiting"
     WScript.Quit 1
 End If
 
-' 检查 desktop_client 模块是否存在
+' Check if desktop_client module exists
 If Not fso.FolderExists(projectRoot & "\\desktop_client") Then
-    WriteLog "错误: desktop_client 模块不存在于: " & projectRoot
+    WriteLog "Error: desktop_client module not found in: " & projectRoot
     WScript.Quit 1
 End If
 
-WriteLog "最终项目根目录: " & projectRoot
+WriteLog "Final project root: " & projectRoot
 
-' 切换到项目目录
+' Change to project directory
 WshShell.CurrentDirectory = projectRoot
-WriteLog "已切换工作目录"
+WriteLog "Changed working directory"
 
-' 延迟启动（等待网络和其他服务就绪）
-WriteLog "等待 8 秒让系统完全启动..."
+' Delayed start (wait for network and other services)
+WriteLog "Waiting 8 seconds for system to fully start..."
 WScript.Sleep 8000
 
-' 构建启动命令
+' Build startup command
 cmd = """" & pythonPath & """ -m desktop_client --autostart"
-WriteLog "执行命令: " & cmd
+WriteLog "Executing command: " & cmd
 
-' 启动应用程序
+' Start the application
 returnCode = WshShell.Run(cmd, 0, False)
 
 If Err.Number <> 0 Then
-    WriteLog "启动失败: " & Err.Description & " (错误代码: " & Err.Number & ")"
+    WriteLog "Start failed: " & Err.Description & " (Error code: " & Err.Number & ")"
 Else
-    WriteLog "应用程序启动成功"
+    WriteLog "Application started successfully"
 End If
 
-WriteLog "========== 开机自启脚本执行完毕 =========="
+WriteLog "========== Autostart script completed =========="
 '''
         
         # 保存到用户配置目录
@@ -359,7 +359,7 @@ WriteLog "========== 开机自启脚本执行完毕 =========="
         vbs_path = config_dir / "autostart_launcher.vbs"
         
         try:
-            with open(vbs_path, 'w', encoding='utf-8') as f:
+            with open(vbs_path, 'w', encoding='gbk') as f:
                 f.write(vbs_content.strip())
             
             logger.info(f"[Windows] 创建静默启动器: {vbs_path}")

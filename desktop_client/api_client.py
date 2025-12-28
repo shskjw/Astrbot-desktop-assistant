@@ -57,12 +57,13 @@ class WebSocketClient:
     - 支持忙碌状态报告，长操作时延长超时
     """
     
-    # 心跳配置常量 - 参考 Satori 适配器使用 10 秒间隔
-    PING_INTERVAL = 10  # WebSocket 底层心跳间隔（秒）- 从 30 秒降到 10 秒
-    PING_TIMEOUT = 10   # WebSocket 底层心跳超时（秒）- 从 20 秒降到 10 秒
-    HEARTBEAT_INTERVAL = 10  # 应用层心跳间隔（秒）- 从 25 秒降到 10 秒
-    # 服务端 CLIENT_INACTIVE_TIMEOUT = 60 秒，这里设置为稍小的值
-    HEARTBEAT_ACK_TIMEOUT = 50  # 心跳响应超时阈值（秒）- 从 100 秒降到 50 秒
+    # 心跳配置常量 - 优化稳定性：PING_TIMEOUT 必须大于 PING_INTERVAL
+    PING_INTERVAL = 20  # WebSocket 底层心跳间隔（秒）
+    PING_TIMEOUT = 40   # WebSocket 底层心跳超时（秒）- 必须大于 PING_INTERVAL 的 2 倍
+    HEARTBEAT_INTERVAL = 15  # 应用层心跳间隔（秒）- 比 PING_INTERVAL 稍小
+    # 服务端 CLIENT_INACTIVE_TIMEOUT = 60 秒，BUSY_STATE_TIMEOUT_EXTENSION = 120 秒
+    # 忙碌状态下总超时 = 60 + 120 = 180 秒，这里设置为稍小的值以适配忙碌状态
+    HEARTBEAT_ACK_TIMEOUT = 90  # 心跳响应超时阈值（秒）- 增加到 90 秒以匹配忙碌状态
     
     # 连接质量监控阈值
     HIGH_LATENCY_THRESHOLD = 5.0  # 高延迟阈值（秒）
@@ -838,8 +839,36 @@ class AstrBotApiClient:
             )
         return self._client
     
+    def _create_sse_client(self) -> httpx.AsyncClient:
+        """
+        为每个SSE请求创建独立的客户端（不复用连接）
+        
+        这是解决消息错位问题的关键：
+        - 每个消息请求使用独立的HTTP连接
+        - 避免连接复用导致的响应流混淆
+        - 请求完成后立即关闭连接，释放资源
+        """
+        # SSE 流式请求需要更长的读取超时
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=300.0,  # 5 分钟读取超时
+                write=30.0,
+                pool=10.0,
+            ),
+            follow_redirects=True,
+            http2=False,  # SSE 保持禁用 HTTP/2，避免流控制问题
+            # 禁用连接池复用，每个请求使用独立连接
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
+        )
+    
     async def _ensure_sse_client(self) -> httpx.AsyncClient:
-        """确保 SSE 客户端已创建（单例复用，更长超时）"""
+        """
+        确保 SSE 客户端已创建（单例复用，更长超时）
+        
+        注意：此方法保留用于向后兼容，但建议使用 _create_sse_client()
+        创建独立客户端以避免消息错位问题
+        """
         if self._sse_client is None or self._sse_client.is_closed:
             # SSE 流式请求需要更长的读取超时
             self._sse_client = httpx.AsyncClient(
@@ -1427,6 +1456,10 @@ class AstrBotApiClient:
             
         Yields:
             SSEEvent 对象
+            
+        重要变更：
+            为避免消息错位问题，每个请求使用独立的HTTP客户端连接，
+            确保响应流完全隔离，不会被其他请求干扰。
         """
         # 构建请求体
         body = {
@@ -1440,15 +1473,17 @@ class AstrBotApiClient:
         if selected_model:
             body["selected_model"] = selected_model
         
-        # 使用复用的 SSE 客户端
-        client = await self._ensure_sse_client()
+        # 为每个请求创建独立的客户端（关键：避免消息错位）
+        # 使用独立连接确保响应流不会混淆
+        client = self._create_sse_client()
         
         try:
             headers = self._get_headers()
             # SSE 特定头
             headers["Accept"] = "text/event-stream"
             headers["Cache-Control"] = "no-cache"
-            # 移除 Connection: close 以允许 Keep-Alive
+            # 强制不复用连接
+            headers["Connection"] = "close"
             
             async with client.stream(
                 "POST",
@@ -1511,6 +1546,12 @@ class AstrBotApiClient:
             pass
         except Exception as e:
             yield SSEEvent(event_type="error", data=f"发送消息异常: {e}")
+        finally:
+            # 确保客户端连接被关闭，释放资源
+            try:
+                await client.aclose()
+            except Exception:
+                pass
     
     async def send_text_message(
         self,

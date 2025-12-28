@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, Signal, QTimer
 
 if TYPE_CHECKING:
     from ..config import ClientConfig
+    from ..bridge import MessageBridge
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class RemoteCommandHandler(QObject):
     def __init__(
         self,
         config: "ClientConfig",
+        bridge: Optional["MessageBridge"] = None,
         parent: Optional[QObject] = None
     ):
         """
@@ -41,10 +43,12 @@ class RemoteCommandHandler(QObject):
         
         Args:
             config: 客户端配置
+            bridge: 消息桥接器（用于访问 WebSocket 客户端）
             parent: 父对象
         """
         super().__init__(parent)
         self._config = config
+        self._bridge = bridge
         self._floating_ball = None
         
         # 命令处理器映射
@@ -55,6 +59,31 @@ class RemoteCommandHandler(QObject):
     def set_floating_ball(self, floating_ball: Any) -> None:
         """设置悬浮球实例（用于隐藏/显示窗口）"""
         self._floating_ball = floating_ball
+    
+    def set_bridge(self, bridge: "MessageBridge") -> None:
+        """设置消息桥接器（用于访问 WebSocket 客户端）"""
+        self._bridge = bridge
+    
+    async def _set_busy_state(self, is_busy: bool, operation: str = "", duration: int = 60) -> None:
+        """
+        设置忙碌状态，通知服务端延长超时时间
+        
+        Args:
+            is_busy: 是否进入忙碌状态
+            operation: 操作名称
+            duration: 预计操作持续时间（秒）
+        """
+        try:
+            if self._bridge and self._bridge.api_client.ws_client:
+                ws_client = self._bridge.api_client.ws_client
+                if ws_client.is_connected:
+                    await ws_client.set_busy_state(is_busy, operation, duration)
+                else:
+                    logger.warning("WebSocket 未连接，无法报告忙碌状态")
+            else:
+                logger.warning("Bridge 或 WebSocket 客户端未设置，无法报告忙碌状态")
+        except Exception as e:
+            logger.error(f"设置忙碌状态失败: {e}")
         
     async def handle_command(
         self, 
@@ -103,8 +132,8 @@ class RemoteCommandHandler(QObject):
             }
     
     async def _handle_screenshot_command(
-        self, 
-        request_id: str, 
+        self,
+        request_id: str,
         params: dict
     ) -> Dict[str, Any]:
         """
@@ -121,6 +150,9 @@ class RemoteCommandHandler(QObject):
         screenshot_type = params.get("type", "full")
         
         logger.info(f"执行远程截图: type={screenshot_type}, request_id={request_id}")
+        
+        # 报告忙碌状态，通知服务端延长超时（截图+编码+传输预计需要30-60秒）
+        await self._set_busy_state(True, "screenshot", 60)
         
         try:
             # 导入截图服务
@@ -193,6 +225,9 @@ class RemoteCommandHandler(QObject):
             # 确保窗口恢复
             if self._floating_ball:
                 self._floating_ball.show()
+            
+            # 退出忙碌状态
+            await self._set_busy_state(False, "screenshot")
     
     def register_command(self, command: str, handler: Callable) -> None:
         """

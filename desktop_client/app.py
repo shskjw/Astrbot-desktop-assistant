@@ -122,6 +122,7 @@ class DesktopClientApp(QObject):
         # 远程命令处理器
         self._remote_command_handler = RemoteCommandHandler(
             config=self.config,
+            bridge=self._bridge,
             parent=self
         )
         

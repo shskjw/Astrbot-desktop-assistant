@@ -8,6 +8,7 @@
 import asyncio
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional, Any, Callable
 
@@ -45,6 +46,7 @@ class MessageBridge(QObject):
     负责：
     1. 管理与 AstrBot 服务器的连接
     2. 处理消息传递（直接通过 asyncio 和 Signal）
+    3. 请求-响应匹配（通过 request_id）
     """
     
     # 信号
@@ -64,6 +66,11 @@ class MessageBridge(QObject):
             timeout=config.server.request_timeout,
             on_state_change=self._on_api_state_change,
         )
+        
+        # 请求追踪：当前活跃的请求ID
+        self._current_request_id: Optional[str] = None
+        # 请求锁：确保同一时间只有一个请求在处理
+        self._request_lock = asyncio.Lock()
         
     def _on_api_state_change(self, state: ConnectionState):
         """API 客户端状态变化回调"""
@@ -126,8 +133,12 @@ class MessageBridge(QObject):
         """断开连接"""
         await self.api_client.close()
     
+    def _generate_request_id(self) -> str:
+        """生成唯一的请求ID"""
+        return f"req_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    
     async def send_input(self, msg: InputMessage):
-        """发送输入消息"""
+        """发送输入消息（使用请求锁确保顺序处理）"""
         if not self.is_connected:
             self.message_received.emit(OutputMessage(
                 msg_type="error",
@@ -136,6 +147,13 @@ class MessageBridge(QObject):
             ))
             return
 
+        # 使用锁确保同一时间只有一个请求在处理
+        # 这样可以避免多个并发请求导致的响应混淆
+        async with self._request_lock:
+            await self._send_input_internal(msg)
+    
+    async def _send_input_internal(self, msg: InputMessage):
+        """内部发送消息实现"""
         try:
             session_id = msg.session_id or self.config.session_id
             
@@ -147,6 +165,11 @@ class MessageBridge(QObject):
                 ))
                 return
             
+            # 生成唯一请求ID
+            request_id = self._generate_request_id()
+            self._current_request_id = request_id
+            print(f"[Bridge] 发送请求: {request_id}, 类型: {msg.msg_type}")
+            
             # 根据消息类型发送
             streaming = self.config.server.enable_streaming
             
@@ -156,7 +179,7 @@ class MessageBridge(QObject):
                     text=msg.content,
                     enable_streaming=streaming,
                 ):
-                    self._handle_sse_event(event, session_id)
+                    self._handle_sse_event(event, session_id, request_id)
                     await asyncio.sleep(0)
                     
             elif msg.msg_type in ("image", "screenshot"):
@@ -166,7 +189,7 @@ class MessageBridge(QObject):
                     text=msg.metadata.get("text", ""),
                     enable_streaming=streaming,
                 ):
-                    self._handle_sse_event(event, session_id)
+                    self._handle_sse_event(event, session_id, request_id)
                     await asyncio.sleep(0)
                     
             elif msg.msg_type == "voice":
@@ -175,7 +198,7 @@ class MessageBridge(QObject):
                     audio_path=msg.content,
                     enable_streaming=streaming,
                 ):
-                    self._handle_sse_event(event, session_id)
+                    self._handle_sse_event(event, session_id, request_id)
                     await asyncio.sleep(0)
                     
             elif msg.msg_type == "file":
@@ -185,19 +208,27 @@ class MessageBridge(QObject):
                     text=msg.metadata.get("text", ""),
                     enable_streaming=streaming,
                 ):
-                    self._handle_sse_event(event, session_id)
+                    self._handle_sse_event(event, session_id, request_id)
                     await asyncio.sleep(0)
             
+            print(f"[Bridge] 请求完成: {request_id}")
+            
         except Exception as e:
-            print(f"处理输入消息失败: {e}")
+            print(f"[Bridge] 处理输入消息失败: {e}")
             self.message_received.emit(OutputMessage(
                 msg_type="error",
                 content=f"发送失败: {e}",
                 session_id=msg.session_id,
             ))
+        finally:
+            # 清除当前请求ID
+            self._current_request_id = None
 
-    def _handle_sse_event(self, event: SSEEvent, session_id: str):
+    def _handle_sse_event(self, event: SSEEvent, session_id: str, request_id: Optional[str] = None):
         """处理 SSE 事件并发射信号"""
+        # 将请求ID添加到元数据中，用于追踪
+        base_metadata = {"request_id": request_id} if request_id else {}
+        
         if event.event_type == "plain":
             # 检查内容是否为空，避免发送空消息
             if not event.data and not event.streaming:
@@ -212,39 +243,43 @@ class MessageBridge(QObject):
             if content and not event.streaming:
                 content = self._extract_function_result(content)
             
+            metadata = {**base_metadata, "chain_type": event.chain_type}
             self.message_received.emit(OutputMessage(
                 msg_type="text",
                 content=content,
                 session_id=session_id,
                 streaming=event.streaming,
-                metadata={"chain_type": event.chain_type}
+                metadata=metadata
             ))
             
         elif event.event_type == "image":
             filename = event.data.replace("[IMAGE]", "")
+            metadata = {**base_metadata, "filename": filename}
             self.message_received.emit(OutputMessage(
                 msg_type="image",
                 content=filename,
                 session_id=session_id,
-                metadata={"filename": filename}
+                metadata=metadata
             ))
             
         elif event.event_type == "record":
             filename = event.data.replace("[RECORD]", "")
+            metadata = {**base_metadata, "filename": filename}
             self.message_received.emit(OutputMessage(
                 msg_type="voice",
                 content=filename,
                 session_id=session_id,
-                metadata={"filename": filename}
+                metadata=metadata
             ))
             
         elif event.event_type == "file":
             filename = event.data.replace("[FILE]", "")
+            metadata = {**base_metadata, "filename": filename}
             self.message_received.emit(OutputMessage(
                 msg_type="file",
                 content=filename,
                 session_id=session_id,
-                metadata={"filename": filename}
+                metadata=metadata
             ))
             
         elif event.event_type in ("end", "complete"):
@@ -253,28 +288,32 @@ class MessageBridge(QObject):
                 content="",
                 session_id=session_id,
                 is_complete=True,
+                metadata=base_metadata
             ))
             
         elif event.event_type == "break":
+            metadata = {**base_metadata, "break": True}
             self.message_received.emit(OutputMessage(
                 msg_type="end",
                 content="",
                 session_id=session_id,
                 is_complete=False,
-                metadata={"break": True}
+                metadata=metadata
             ))
             
         elif event.event_type == "message_saved":
             raw = event.raw or {}
             data = raw.get("data", {})
+            metadata = {
+                **base_metadata,
+                "message_id": data.get("id"),
+                "created_at": data.get("created_at"),
+            }
             self.message_received.emit(OutputMessage(
                 msg_type="saved",
                 content="",
                 session_id=session_id,
-                metadata={
-                    "message_id": data.get("id"),
-                    "created_at": data.get("created_at"),
-                }
+                metadata=metadata
             ))
             
         elif event.event_type == "error":
@@ -282,6 +321,7 @@ class MessageBridge(QObject):
                 msg_type="error",
                 content=event.data,
                 session_id=session_id,
+                metadata=base_metadata
             ))
 
     def _extract_function_result(self, content: str) -> str:
