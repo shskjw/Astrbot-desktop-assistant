@@ -2,7 +2,7 @@
 更新服务模块
 
 实现应用程序更新功能，包括：
-- 检查 GitHub 是否有新版本
+- 检查 GitHub 是否有新版本（支持 Release 稳定版和 Git 最新版两种模式）
 - 执行更新脚本（update.bat/update.sh）
 - 定时检查更新任务
 """
@@ -13,8 +13,9 @@ import subprocess
 import logging
 import asyncio
 import platform
+import re
 from datetime import datetime, time as dt_time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
 
 try:
@@ -137,12 +138,30 @@ class UpdateService(QObject):
     
     def _get_current_version(self) -> Optional[str]:
         """
-        获取当前版本（Git commit hash）
+        获取当前版本
+        
+        根据更新模式返回不同格式的版本：
+        - release 模式: 尝试获取 git tag，如 "v1.0.0"
+        - git 模式: 返回 commit hash
         
         Returns:
-            版本号（短 commit hash）或 None
+            版本号或 None
         """
         try:
+            if self._config.update_mode == "release":
+                # 尝试获取当前 tag
+                result = subprocess.run(
+                    ["git", "describe", "--tags", "--abbrev=0"],
+                    cwd=self._project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+                # 如果没有 tag，返回 commit hash
+                
+            # 默认返回 commit hash
             result = subprocess.run(
                 ["git", "log", "-1", "--format=%h"],
                 cwd=self._project_dir,
@@ -181,6 +200,10 @@ class UpdateService(QObject):
         """
         检查 GitHub 是否有新版本
         
+        根据 update_mode 配置选择检查方式：
+        - "release": 检查 GitHub Releases 的最新稳定版
+        - "git": 检查 Git 仓库的最新代码
+        
         Returns:
             (是否有更新, 当前版本, 最新版本或错误消息)
         """
@@ -200,60 +223,217 @@ class UpdateService(QObject):
             
             self._current_version = current
             
-            # 使用 git fetch 获取远程最新信息
-            fetch_result = await self._run_git_command(["git", "fetch", "origin", "--depth", "1"])
-            if not fetch_result[0]:
-                # 尝试使用 API
-                has_update, latest = await self._check_via_api()
-                self._is_checking = False
-                
-                if has_update is None:
-                    self.check_finished.emit(False, latest)
-                    return False, current, latest
-                
-                self._latest_version = latest
-                self._update_last_check_time()
-                
-                if has_update:
-                    self.update_available.emit(current, latest)
-                
-                self.check_finished.emit(has_update, latest)
-                return has_update, current, latest
-            
-            # 获取远程最新 commit
-            result = await self._run_git_command(
-                ["git", "rev-parse", "--short", "origin/main"]
-            )
-            if not result[0]:
-                # 尝试 master 分支
-                result = await self._run_git_command(
-                    ["git", "rev-parse", "--short", "origin/master"]
-                )
-            
-            if not result[0]:
-                self._is_checking = False
-                self.check_finished.emit(False, "无法获取远程版本")
-                return False, current, "无法获取远程版本"
-            
-            latest = result[1].strip()
-            self._latest_version = latest
-            self._update_last_check_time()
-            
-            has_update = current != latest
-            
-            if has_update:
-                self.update_available.emit(current, latest)
-            
-            self.check_finished.emit(has_update, latest)
-            self._is_checking = False
-            
-            return has_update, current, latest
+            # 根据更新模式选择检查方式
+            if self._config.update_mode == "release":
+                return await self._check_release_update(current)
+            else:
+                return await self._check_git_update(current)
             
         except Exception as e:
             logger.error(f"检查更新失败: {e}")
             self._is_checking = False
             self.check_finished.emit(False, str(e))
             return False, self.current_version, str(e)
+    
+    async def _check_release_update(self, current: str) -> Tuple[bool, str, str]:
+        """
+        检查 GitHub Release 更新（稳定版模式）
+        
+        Args:
+            current: 当前版本号
+            
+        Returns:
+            (是否有更新, 当前版本, 最新版本或错误消息)
+        """
+        try:
+            release_info = await self._get_latest_release()
+            
+            if release_info is None:
+                self._is_checking = False
+                self.check_finished.emit(False, "无法获取 Release 信息")
+                return False, current, "无法获取 Release 信息（可能还没有发布 Release）"
+            
+            latest_version = release_info.get("tag_name", "")
+            download_url = release_info.get("html_url", "")
+            
+            # 保存 Release 信息
+            self._config.latest_release_version = latest_version
+            self._config.latest_release_url = download_url
+            
+            self._latest_version = latest_version
+            self._update_last_check_time()
+            
+            # 比较版本
+            has_update = self._compare_versions(current, latest_version)
+            
+            if has_update:
+                self.update_available.emit(current, latest_version)
+            
+            self.check_finished.emit(has_update, latest_version)
+            self._is_checking = False
+            
+            return has_update, current, latest_version
+            
+        except Exception as e:
+            logger.error(f"检查 Release 更新失败: {e}")
+            self._is_checking = False
+            self.check_finished.emit(False, str(e))
+            return False, current, str(e)
+    
+    async def _check_git_update(self, current: str) -> Tuple[bool, str, str]:
+        """
+        检查 Git 最新代码更新（开发版模式）
+        
+        Args:
+            current: 当前版本号
+            
+        Returns:
+            (是否有更新, 当前版本, 最新版本或错误消息)
+        """
+        # 使用 git fetch 获取远程最新信息
+        fetch_result = await self._run_git_command(["git", "fetch", "origin", "--depth", "1"])
+        if not fetch_result[0]:
+            # 尝试使用 API
+            has_update, latest = await self._check_via_api()
+            self._is_checking = False
+            
+            if has_update is None:
+                self.check_finished.emit(False, latest)
+                return False, current, latest
+            
+            self._latest_version = latest
+            self._update_last_check_time()
+            
+            if has_update:
+                self.update_available.emit(current, latest)
+            
+            self.check_finished.emit(has_update, latest)
+            return has_update, current, latest
+        
+        # 获取远程最新 commit
+        result = await self._run_git_command(
+            ["git", "rev-parse", "--short", "origin/main"]
+        )
+        if not result[0]:
+            # 尝试 master 分支
+            result = await self._run_git_command(
+                ["git", "rev-parse", "--short", "origin/master"]
+            )
+        
+        if not result[0]:
+            self._is_checking = False
+            self.check_finished.emit(False, "无法获取远程版本")
+            return False, current, "无法获取远程版本"
+        
+        latest = result[1].strip()
+        self._latest_version = latest
+        self._update_last_check_time()
+        
+        has_update = current != latest
+        
+        if has_update:
+            self.update_available.emit(current, latest)
+        
+        self.check_finished.emit(has_update, latest)
+        self._is_checking = False
+        
+        return has_update, current, latest
+    
+    async def _get_latest_release(self) -> Optional[Dict[str, Any]]:
+        """
+        从 GitHub API 获取最新 Release 信息
+        
+        Returns:
+            Release 信息字典或 None
+        """
+        if not HAS_AIOHTTP:
+            logger.warning("aiohttp 库未安装，无法通过 API 检查 Release")
+            return None
+        
+        try:
+            # 解析仓库 URL
+            repo_url = self._config.repo_url
+            parts = repo_url.rstrip('/').split('/')
+            owner = parts[-2]
+            repo = parts[-1]
+            
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+            
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": "AstrBot-Desktop-Assistant"
+                }
+                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    elif response.status == 404:
+                        logger.info("仓库暂无 Release 发布")
+                        return None
+                    else:
+                        logger.error(f"GitHub API 请求失败: {response.status}")
+                        return None
+                        
+        except Exception as e:
+            logger.error(f"获取 Release 信息失败: {e}")
+            return None
+    
+    def _compare_versions(self, current: str, latest: str) -> bool:
+        """
+        比较版本号，判断是否需要更新
+        
+        支持的版本格式:
+        - 语义化版本: v1.0.0, 1.0.0, v1.2.3-beta
+        - Commit hash: abc1234
+        
+        Args:
+            current: 当前版本
+            latest: 最新版本
+            
+        Returns:
+            True 如果需要更新
+        """
+        if not current or not latest:
+            return False
+        
+        # 如果完全相同，不需要更新
+        if current == latest:
+            return False
+        
+        # 尝试解析语义化版本
+        current_ver = self._parse_version(current)
+        latest_ver = self._parse_version(latest)
+        
+        if current_ver and latest_ver:
+            # 比较语义化版本
+            return latest_ver > current_ver
+        
+        # 如果无法解析为语义化版本，简单比较字符串
+        # 对于 commit hash，只要不同就认为有更新
+        return current != latest
+    
+    def _parse_version(self, version: str) -> Optional[Tuple[int, int, int]]:
+        """
+        解析语义化版本号
+        
+        Args:
+            version: 版本字符串，如 "v1.2.3" 或 "1.2.3"
+            
+        Returns:
+            (major, minor, patch) 元组或 None
+        """
+        # 移除 'v' 前缀
+        version = version.lstrip('v')
+        
+        # 移除预发布后缀 (如 -beta, -rc.1)
+        version = version.split('-')[0]
+        
+        # 尝试解析
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version)
+        if match:
+            return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        
+        return None
     
     async def _check_via_api(self) -> Tuple[Optional[bool], str]:
         """
@@ -336,7 +516,11 @@ class UpdateService(QObject):
     
     def perform_update(self) -> bool:
         """
-        执行更新操作（调用 update.bat/update.sh）
+        执行更新操作
+        
+        根据更新模式选择不同的更新方式：
+        - release 模式: 调用更新脚本，更新到指定 tag
+        - git 模式: 调用更新脚本，拉取最新代码
         
         Returns:
             是否成功启动更新
@@ -344,18 +528,26 @@ class UpdateService(QObject):
         try:
             system = platform.system().lower()
             
+            # 确定更新脚本参数
+            update_mode = self._config.update_mode
+            target_version = ""
+            
+            if update_mode == "release" and self._config.latest_release_version:
+                target_version = self._config.latest_release_version
+            
             if system == "windows":
                 script_path = os.path.join(self._project_dir, "update.bat")
                 if not os.path.exists(script_path):
                     self.update_failed.emit("找不到 update.bat 更新脚本")
                     return False
                 
+                # 构建命令，传递更新模式和目标版本
+                cmd = ["cmd", "/c", "start", "cmd", "/k", script_path]
+                if update_mode == "release" and target_version:
+                    cmd = ["cmd", "/c", "start", "cmd", "/k", script_path, "release", target_version]
+                
                 # 使用 start 命令在新窗口中运行
-                subprocess.Popen(
-                    ["cmd", "/c", "start", "cmd", "/k", script_path],
-                    cwd=self._project_dir,
-                    shell=False
-                )
+                subprocess.Popen(cmd, cwd=self._project_dir, shell=False)
                 
             elif system in ("linux", "darwin"):
                 script_path = os.path.join(self._project_dir, "update.sh")
@@ -366,19 +558,24 @@ class UpdateService(QObject):
                 # 确保脚本有执行权限
                 os.chmod(script_path, 0o755)
                 
+                # 构建命令
+                script_args = [script_path]
+                if update_mode == "release" and target_version:
+                    script_args = [script_path, "release", target_version]
+                
                 # 在新终端中运行
                 if system == "darwin":
                     # macOS
                     subprocess.Popen(
-                        ["open", "-a", "Terminal", script_path],
+                        ["open", "-a", "Terminal"] + script_args,
                         cwd=self._project_dir
                     )
                 else:
                     # Linux - 尝试多种终端
                     terminals = [
-                        ["gnome-terminal", "--", "bash", script_path],
-                        ["xterm", "-e", f"bash {script_path}"],
-                        ["konsole", "-e", f"bash {script_path}"],
+                        ["gnome-terminal", "--"] + ["bash"] + script_args,
+                        ["xterm", "-e", f"bash {' '.join(script_args)}"],
+                        ["konsole", "-e", f"bash {' '.join(script_args)}"],
                     ]
                     
                     for terminal_cmd in terminals:
@@ -390,15 +587,16 @@ class UpdateService(QObject):
                     else:
                         # 如果没有找到终端，直接在后台运行
                         subprocess.Popen(
-                            ["bash", script_path],
+                            ["bash"] + script_args,
                             cwd=self._project_dir
                         )
             else:
                 self.update_failed.emit(f"不支持的操作系统: {system}")
                 return False
             
-            logger.info("更新脚本已启动")
-            self.update_completed.emit(True, "更新脚本已启动，请查看更新窗口")
+            mode_text = "稳定版" if update_mode == "release" else "最新版"
+            logger.info(f"更新脚本已启动 (模式: {mode_text})")
+            self.update_completed.emit(True, f"更新脚本已启动 (模式: {mode_text})，请查看更新窗口")
             
             # 如果配置了自动重启，退出当前程序
             if self._config.auto_restart:
@@ -493,6 +691,13 @@ class UpdateService(QObject):
         Returns:
             状态信息字典
         """
+        has_update = False
+        if self._latest_version and self._current_version:
+            if self._config.update_mode == "release":
+                has_update = self._compare_versions(self._current_version, self._latest_version)
+            else:
+                has_update = self._current_version != self._latest_version
+        
         return {
             "enabled": self._config.enabled,
             "is_checking": self._is_checking,
@@ -502,6 +707,9 @@ class UpdateService(QObject):
             "check_on_startup": self._config.check_on_startup,
             "scheduled_times": self._config.scheduled_times,
             "auto_restart": self._config.auto_restart,
-            "has_update": self._latest_version and self._current_version != self._latest_version,
+            "has_update": has_update,
             "project_dir": self._project_dir,
+            "update_mode": self._config.update_mode,
+            "latest_release_version": self._config.latest_release_version,
+            "latest_release_url": self._config.latest_release_url,
         }

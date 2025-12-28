@@ -4,10 +4,16 @@
 # AstrBot Desktop Assistant - macOS/Linux 一键更新脚本
 # ============================================================================
 # 特点：
-#   1. 只需选择网络环境（海外/国内）
-#   2. 自动检测项目目录
-#   3. 自动更新代码和依赖
-#   4. 显示版本变化
+#   1. 支持双模式更新：Git（最新版）/ Release（稳定版）
+#   2. 只需选择网络环境（海外/国内）
+#   3. 自动检测项目目录
+#   4. 自动更新代码和依赖
+#   5. 显示版本变化
+# ============================================================================
+# 用法：
+#   ./update.sh                    - 默认使用 Git 模式更新到最新代码
+#   ./update.sh git                - 使用 Git 模式更新到最新代码
+#   ./update.sh release v1.0.0     - 使用 Release 模式更新到指定版本
 # ============================================================================
 
 # 颜色定义
@@ -18,6 +24,19 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
+# 解析命令行参数
+UPDATE_MODE="${1:-git}"
+TARGET_VERSION="${2:-}"
+
+# 验证参数
+if [[ "$UPDATE_MODE" == "release" && -z "$TARGET_VERSION" ]]; then
+    echo ""
+    echo -e "${RED}错误: Release 模式需要指定版本号${NC}"
+    echo "用法: ./update.sh release v1.0.0"
+    echo ""
+    exit 1
+fi
+
 # 加速代理列表
 PROXY_HOSTS=("gh.llkk.cc" "gh-proxy.com" "mirror.ghproxy.com" "ghproxy.net")
 
@@ -27,6 +46,14 @@ echo -e "${CYAN}║                                                             
 echo -e "${CYAN}║          ${WHITE}AstrBot Desktop Assistant 一键更新脚本${CYAN}                      ║${NC}"
 echo -e "${CYAN}║                                                                      ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+# 显示更新模式
+if [[ "$UPDATE_MODE" == "release" ]]; then
+    echo -e "${YELLOW}更新模式: Release（稳定版）- 目标版本: $TARGET_VERSION${NC}"
+else
+    echo -e "${GREEN}更新模式: Git（最新版）${NC}"
+fi
 echo ""
 
 # ============================================================================
@@ -146,17 +173,63 @@ fi
 echo ""
 echo -e "${CYAN}[3/5]${NC} 更新代码..."
 
-# 先 fetch
-git fetch origin main --depth 1 2>/dev/null || git fetch origin master --depth 1 2>/dev/null
+update_failed() {
+    echo ""
+    echo -e "${RED}更新失败，请检查网络连接或版本号是否正确${NC}"
+    # 清理代理配置
+    if [[ -n "$BEST_PROXY" ]]; then
+        git config --local --unset url."https://$BEST_PROXY/https://github.com".insteadOf 2>/dev/null
+    fi
+    exit 1
+}
 
-# 执行 pull
-echo "正在拉取最新代码..."
-if ! git pull --rebase 2>/dev/null; then
-    # 尝试不带 rebase
-    if ! git pull 2>/dev/null; then
-        echo -e "${YELLOW}⚠ 常规更新失败，尝试强制更新...${NC}"
-        git fetch origin main --depth 1 2>/dev/null && git reset --hard origin/main 2>/dev/null || \
-        (git fetch origin master --depth 1 2>/dev/null && git reset --hard origin/master 2>/dev/null)
+if [[ "$UPDATE_MODE" == "release" ]]; then
+    # ========================================================================
+    # Release 模式：切换到指定版本标签
+    # ========================================================================
+    echo "正在获取版本标签..."
+    if ! git fetch --tags 2>/dev/null; then
+        echo -e "${RED}✗ 获取标签失败${NC}"
+        update_failed
+    fi
+    
+    # 检查目标版本是否存在
+    if ! git tag -l "$TARGET_VERSION" | grep -q .; then
+        echo -e "${RED}✗ 版本 $TARGET_VERSION 不存在${NC}"
+        echo ""
+        echo -e "${WHITE}可用版本列表：${NC}"
+        git tag -l --sort=-v:refname | head -10 2>/dev/null
+        update_failed
+    fi
+    
+    # 切换到指定版本
+    echo "正在切换到版本 $TARGET_VERSION..."
+    if ! git checkout "$TARGET_VERSION" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ 切换失败，尝试强制切换...${NC}"
+        if ! git checkout -f "$TARGET_VERSION" 2>/dev/null; then
+            echo -e "${RED}✗ 切换版本失败${NC}"
+            update_failed
+        fi
+    fi
+    
+    echo -e "${GREEN}✓ 已切换到版本 $TARGET_VERSION${NC}"
+    
+else
+    # ========================================================================
+    # Git 模式：拉取最新代码
+    # ========================================================================
+    # 先 fetch
+    git fetch origin main --depth 1 2>/dev/null || git fetch origin master --depth 1 2>/dev/null
+
+    # 执行 pull
+    echo "正在拉取最新代码..."
+    if ! git pull --rebase 2>/dev/null; then
+        # 尝试不带 rebase
+        if ! git pull 2>/dev/null; then
+            echo -e "${YELLOW}⚠ 常规更新失败，尝试强制更新...${NC}"
+            git fetch origin main --depth 1 2>/dev/null && git reset --hard origin/main 2>/dev/null || \
+            (git fetch origin master --depth 1 2>/dev/null && git reset --hard origin/master 2>/dev/null)
+        fi
     fi
 fi
 
@@ -170,9 +243,15 @@ NEW_COMMIT=$(git log -1 --format="%h" 2>/dev/null)
 NEW_DATE=$(git log -1 --format="%ci" 2>/dev/null)
 NEW_MSG=$(git log -1 --format="%s" 2>/dev/null)
 
+# 获取当前标签（如果有）
+NEW_TAG=$(git describe --tags --exact-match 2>/dev/null)
+
 echo ""
 echo -e "${WHITE}更新后版本：${NC}"
 echo "  提交: $NEW_COMMIT"
+if [[ -n "$NEW_TAG" ]]; then
+    echo "  标签: $NEW_TAG"
+fi
 echo "  日期: $NEW_DATE"
 echo "  说明: $NEW_MSG"
 
@@ -240,6 +319,12 @@ echo -e "${GREEN}║                                                            
 echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║                                                                      ║${NC}"
 
+if [[ "$UPDATE_MODE" == "release" ]]; then
+    echo -e "${GREEN}║  模式: Release（稳定版）                                             ║${NC}"
+    echo -e "${GREEN}║  目标版本: $TARGET_VERSION                                                    ║${NC}"
+else
+    echo -e "${GREEN}║  模式: Git（最新版）                                                 ║${NC}"
+fi
 if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
     echo -e "${GREEN}║  状态: 已是最新版本                                                  ║${NC}"
 else

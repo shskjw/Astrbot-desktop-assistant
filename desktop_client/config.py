@@ -279,6 +279,12 @@ class UpdateConfig:
     repo_url: str = "https://github.com/LargeCupPanda/Astrbot-desktop-assistant"
     # 当前版本（从 git commit 获取）
     current_version: str = ""
+    # 更新模式: "release" = 稳定版(GitHub Release), "git" = 最新版(Git 最新代码)
+    update_mode: str = "release"
+    # 最新已知的 Release 版本号
+    latest_release_version: str = ""
+    # 最新已知的 Release 下载地址
+    latest_release_url: str = ""
     
 
 @dataclass

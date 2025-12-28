@@ -980,6 +980,28 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(16, 16, 16, 16)
         
+        # 更新模式设置
+        mode_section = SettingsSection("更新模式")
+        
+        self._update_mode = QComboBox()
+        self._update_mode.addItem("📦 稳定版 (Release)", "release")
+        self._update_mode.addItem("🔥 最新版 (Git)", "git")
+        self._update_mode.setToolTip(
+            "稳定版：从 GitHub Releases 获取经过测试的稳定版本\n"
+            "最新版：直接拉取 Git 仓库的最新代码（可能包含未测试的功能）"
+        )
+        mode_section.add_row("更新通道", self._update_mode)
+        
+        mode_info = QLabel(
+            "• 稳定版：推荐普通用户使用，版本经过测试更加稳定\n"
+            "• 最新版：适合开发者或想体验新功能的用户"
+        )
+        mode_info.setWordWrap(True)
+        mode_info.setObjectName("infoLabel")
+        mode_section.add_widget(mode_info)
+        
+        layout.addWidget(mode_section)
+        
         # 基础设置
         basic_section = SettingsSection("自动更新")
         
@@ -1044,6 +1066,11 @@ class SettingsWindow(QWidget):
         self._current_version_label.setObjectName("settingLabel")
         version_section.add_widget(self._current_version_label)
         
+        # 最新版本（Release）
+        self._latest_release_label = QLabel("最新稳定版：未检查")
+        self._latest_release_label.setObjectName("infoLabel")
+        version_section.add_widget(self._latest_release_label)
+        
         # 上次检查时间
         self._last_check_label = QLabel("上次检查：从未检查")
         self._last_check_label.setObjectName("infoLabel")
@@ -1093,7 +1120,9 @@ class SettingsWindow(QWidget):
         # 说明信息
         info_section = SettingsSection("功能说明")
         info_label = QLabel(
-            "• 启用自动更新后，程序将在定时时间点自动检查 GitHub 上是否有新版本。\n"
+            "• 稳定版模式：从 GitHub Releases 获取版本，更新到指定的 Release 标签。\n"
+            "• 最新版模式：直接拉取 Git 仓库的最新代码，获得最新功能。\n"
+            "• 启用自动更新后，程序将在定时时间点自动检查是否有新版本。\n"
             "• 检测到更新时，会弹出提示通知您。\n"
             "• 点击「立即更新」将运行 update.bat/update.sh 脚本执行更新。\n"
             "• 更新过程中请勿关闭更新窗口，更新完成后程序将自动重启（如已启用）。"
@@ -1723,6 +1752,13 @@ class SettingsWindow(QWidget):
             self._update_check_on_startup.setChecked(self.config.update.check_on_startup)
             self._update_auto_restart.setChecked(self.config.update.auto_restart)
             
+            # 更新模式
+            update_mode = getattr(self.config.update, 'update_mode', 'release')
+            for i in range(self._update_mode.count()):
+                if self._update_mode.itemData(i) == update_mode:
+                    self._update_mode.setCurrentIndex(i)
+                    break
+            
             # 加载定时时间列表
             for time_str in self.config.update.scheduled_times:
                 time = QTime.fromString(time_str, "HH:mm")
@@ -1740,6 +1776,11 @@ class SettingsWindow(QWidget):
             if self.config.update.last_check_time:
                 self._last_check_label.setText(f"上次检查：{self.config.update.last_check_time}")
             
+            # 最新 Release 版本
+            latest_release = getattr(self.config.update, 'latest_release_version', '')
+            if latest_release:
+                self._latest_release_label.setText(f"最新稳定版：{latest_release}")
+            
             # 根据启用状态设置控件可用性
             enabled = self.config.update.enabled
             self._update_check_on_startup.setEnabled(enabled)
@@ -1750,6 +1791,7 @@ class SettingsWindow(QWidget):
             self._update_enabled.setChecked(False)
             self._update_check_on_startup.setChecked(True)
             self._update_auto_restart.setChecked(False)
+            self._update_mode.setCurrentIndex(0)  # 默认稳定版
             self._add_schedule_time_row(QTime(12, 0))
             self._add_schedule_time_row(QTime(18, 0))
             # 禁用相关控件
@@ -1936,6 +1978,7 @@ class SettingsWindow(QWidget):
                 'enabled': self._update_enabled.isChecked(),
                 'check_on_startup': self._update_check_on_startup.isChecked(),
                 'auto_restart': self._update_auto_restart.isChecked(),
+                'update_mode': self._update_mode.currentData(),
                 'scheduled_times': [
                     row['editor'].time().toString("HH:mm")
                     for row in self._schedule_time_editors
@@ -1996,6 +2039,7 @@ class SettingsWindow(QWidget):
                 self.config.update.enabled = settings['update']['enabled']
                 self.config.update.check_on_startup = settings['update']['check_on_startup']
                 self.config.update.auto_restart = settings['update']['auto_restart']
+                self.config.update.update_mode = settings['update']['update_mode']
                 self.config.update.scheduled_times = settings['update']['scheduled_times']
             
             # 自定义颜色

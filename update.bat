@@ -6,13 +6,42 @@ setlocal EnableDelayedExpansion
 :: AstrBot Desktop Assistant - Windows 一键更新脚本
 :: ============================================================================
 :: 特点：
-::   1. 只需选择网络环境（海外/国内）
-::   2. 自动检测项目目录
-::   3. 自动更新代码和依赖
-::   4. 显示版本变化
+::   1. 支持双模式更新：Git（最新版）/ Release（稳定版）
+::   2. 只需选择网络环境（海外/国内）
+::   3. 自动检测项目目录
+::   4. 自动更新代码和依赖
+::   5. 显示版本变化
+:: ============================================================================
+:: 用法：
+::   update.bat                    - 默认使用 Git 模式更新到最新代码
+::   update.bat git                - 使用 Git 模式更新到最新代码
+::   update.bat release v1.0.0     - 使用 Release 模式更新到指定版本
 :: ============================================================================
 
 title AstrBot Desktop Assistant 一键更新
+
+:: 解析命令行参数
+set "UPDATE_MODE=git"
+set "TARGET_VERSION="
+
+if not "%~1"=="" (
+    set "UPDATE_MODE=%~1"
+)
+if not "%~2"=="" (
+    set "TARGET_VERSION=%~2"
+)
+
+:: 验证参数
+if /i "!UPDATE_MODE!"=="release" (
+    if "!TARGET_VERSION!"=="" (
+        echo.
+        echo [91m错误: Release 模式需要指定版本号[0m
+        echo 用法: update.bat release v1.0.0
+        echo.
+        pause
+        exit /b 1
+    )
+)
 
 :: 颜色定义
 set "GREEN=[92m"
@@ -31,6 +60,14 @@ echo %CYAN%║                                                                  
 echo %CYAN%║          %WHITE%AstrBot Desktop Assistant 一键更新脚本%CYAN%                      ║%RESET%
 echo %CYAN%║                                                                      ║%RESET%
 echo %CYAN%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo.
+
+:: 显示更新模式
+if /i "!UPDATE_MODE!"=="release" (
+    echo %YELLOW%更新模式: Release（稳定版）- 目标版本: !TARGET_VERSION!%RESET%
+) else (
+    echo %GREEN%更新模式: Git（最新版）%RESET%
+)
 echo.
 
 :: ============================================================================
@@ -157,31 +194,74 @@ if "!NETWORK_CHOICE!"=="1" (
 echo.
 echo %CYAN%[3/5]%RESET% 更新代码...
 
-:: 先 fetch
-git fetch origin main --depth 1 2>nul
-if !ERRORLEVEL! NEQ 0 (
-    git fetch origin master --depth 1 2>nul
-)
-
-:: 检查是否有更新
-git status -uno | findstr /i "behind" >nul 2>&1
-if !ERRORLEVEL! NEQ 0 (
-    :: 可能已经是最新，或者 fetch 失败，尝试 pull
-    echo 正在拉取最新代码...
-)
-
-:: 执行 pull
-git pull --rebase 2>nul
-if !ERRORLEVEL! NEQ 0 (
-    :: 尝试不带 rebase
-    git pull 2>nul
+if /i "!UPDATE_MODE!"=="release" (
+    :: ========================================================================
+    :: Release 模式：切换到指定版本标签
+    :: ========================================================================
+    echo 正在获取版本标签...
+    git fetch --tags 2>nul
     if !ERRORLEVEL! NEQ 0 (
-        echo %YELLOW%⚠ 常规更新失败，尝试强制更新...%RESET%
-        git fetch origin main --depth 1 2>nul
-        git reset --hard origin/main 2>nul
+        echo %RED%✗ 获取标签失败%RESET%
+        goto :update_failed
+    )
+    
+    :: 检查目标版本是否存在
+    git tag -l "!TARGET_VERSION!" | findstr /r "." >nul 2>&1
+    if !ERRORLEVEL! NEQ 0 (
+        echo %RED%✗ 版本 !TARGET_VERSION! 不存在%RESET%
+        echo.
+        echo %WHITE%可用版本列表：%RESET%
+        git tag -l --sort=-v:refname | head -10 2>nul
+        for /f "tokens=*" %%t in ('git tag -l --sort^=-v:refname 2^>nul') do (
+            echo   %%t
+        )
+        goto :update_failed
+    )
+    
+    :: 切换到指定版本
+    echo 正在切换到版本 !TARGET_VERSION!...
+    git checkout "!TARGET_VERSION!" 2>nul
+    if !ERRORLEVEL! NEQ 0 (
+        echo %YELLOW%⚠ 切换失败，尝试强制切换...%RESET%
+        git checkout -f "!TARGET_VERSION!" 2>nul
         if !ERRORLEVEL! NEQ 0 (
-            git fetch origin master --depth 1 2>nul
-            git reset --hard origin/master 2>nul
+            echo %RED%✗ 切换版本失败%RESET%
+            goto :update_failed
+        )
+    )
+    
+    echo %GREEN%✓ 已切换到版本 !TARGET_VERSION!%RESET%
+    
+) else (
+    :: ========================================================================
+    :: Git 模式：拉取最新代码
+    :: ========================================================================
+    :: 先 fetch
+    git fetch origin main --depth 1 2>nul
+    if !ERRORLEVEL! NEQ 0 (
+        git fetch origin master --depth 1 2>nul
+    )
+
+    :: 检查是否有更新
+    git status -uno | findstr /i "behind" >nul 2>&1
+    if !ERRORLEVEL! NEQ 0 (
+        :: 可能已经是最新，或者 fetch 失败，尝试 pull
+        echo 正在拉取最新代码...
+    )
+
+    :: 执行 pull
+    git pull --rebase 2>nul
+    if !ERRORLEVEL! NEQ 0 (
+        :: 尝试不带 rebase
+        git pull 2>nul
+        if !ERRORLEVEL! NEQ 0 (
+            echo %YELLOW%⚠ 常规更新失败，尝试强制更新...%RESET%
+            git fetch origin main --depth 1 2>nul
+            git reset --hard origin/main 2>nul
+            if !ERRORLEVEL! NEQ 0 (
+                git fetch origin master --depth 1 2>nul
+                git reset --hard origin/master 2>nul
+            )
         )
     )
 )
@@ -196,9 +276,14 @@ for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h"`) do set "NEW_COM
 for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%ci"`) do set "NEW_DATE=%%i"
 for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%s"`) do set "NEW_MSG=%%i"
 
+:: 获取当前标签（如果有）
+set "NEW_TAG="
+for /f "usebackq tokens=*" %%i in (`git describe --tags --exact-match 2^>nul`) do set "NEW_TAG=%%i"
+
 echo.
 echo %WHITE%更新后版本：%RESET%
 echo   提交: %NEW_COMMIT%
+if defined NEW_TAG echo   标签: %NEW_TAG%
 echo   日期: %NEW_DATE%
 echo   说明: %NEW_MSG%
 
@@ -210,6 +295,20 @@ if "%OLD_COMMIT%"=="%NEW_COMMIT%" (
     echo.
     echo %GREEN%✓ 代码已更新 (%OLD_COMMIT% → %NEW_COMMIT%)%RESET%
 )
+
+goto :update_deps
+
+:update_failed
+echo.
+echo %RED%更新失败，请检查网络连接或版本号是否正确%RESET%
+:: 清理代理配置
+if defined BEST_PROXY (
+    git config --local --unset url."https://!BEST_PROXY!/https://github.com".insteadOf 2>nul
+)
+pause
+exit /b 1
+
+:update_deps
 
 :: ============================================================================
 :: 更新依赖
@@ -264,6 +363,12 @@ echo %GREEN%║                    ✓ 更新成功！                          
 echo %GREEN%║                                                                      ║%RESET%
 echo %GREEN%╠══════════════════════════════════════════════════════════════════════╣%RESET%
 echo %GREEN%║                                                                      ║%RESET%
+if /i "!UPDATE_MODE!"=="release" (
+echo %GREEN%║  模式: Release（稳定版）                                             ║%RESET%
+echo %GREEN%║  目标版本: !TARGET_VERSION!                                                    ║%RESET%
+) else (
+echo %GREEN%║  模式: Git（最新版）                                                 ║%RESET%
+)
 if "%OLD_COMMIT%"=="%NEW_COMMIT%" (
 echo %GREEN%║  状态: 已是最新版本                                                  ║%RESET%
 ) else (
