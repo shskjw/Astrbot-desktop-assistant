@@ -28,7 +28,7 @@ from qasync import QEventLoop, asyncSlot
 from .config import ClientConfig, load_config, save_config
 from .bridge import MessageBridge, InputMessage
 from .services.proactive_dialog import ProactiveDialogService
-from .services import get_chat_history_manager
+from .services import get_chat_history_manager, UpdateService
 from .handlers import MessageHandler, ScreenshotHandler, ProactiveHandler, MediaHandler, RemoteCommandHandler
 from .controllers import SettingsController
 
@@ -77,6 +77,9 @@ class DesktopClientApp(QObject):
         
         # 主动对话服务
         self._proactive_service = None
+        
+        # 更新服务
+        self._update_service = None
         
         # 重连计时器
         self._reconnect_timer: Optional[QTimer] = None
@@ -495,6 +498,18 @@ class DesktopClientApp(QObject):
         self._settings_window.settings_changed.connect(self._settings_controller.on_settings_changed)
         print("[DEBUG] 设置窗口创建完成")
         
+        # 创建更新服务并绑定到设置窗口
+        print("[DEBUG] 创建更新服务...")
+        self._update_service = UpdateService(
+            config=self.config.update,
+            parent=self
+        )
+        self._settings_window.set_update_callbacks(
+            check_callback=self._on_check_update,
+            perform_callback=self._on_perform_update
+        )
+        print("[DEBUG] 更新服务创建完成")
+        
         # 创建主动对话服务
         print("[DEBUG] 创建主动对话服务...")
         if self.config.storage.image_save_path:
@@ -608,6 +623,56 @@ class DesktopClientApp(QObject):
             self._settings_window.show()
             self._settings_window.raise_()
             self._settings_window.activateWindow()
+    
+    def _on_check_update(self):
+        """检查更新回调"""
+        if self._update_service:
+            asyncio.ensure_future(self._do_check_update())
+    
+    async def _do_check_update(self):
+        """异步执行更新检查"""
+        if not self._update_service:
+            return
+        
+        try:
+            has_update, current, latest = await self._update_service.check_for_update()
+            
+            if self._settings_window:
+                # 使用公共方法更新版本信息
+                from datetime import datetime
+                self._settings_window.update_version_info(
+                    current_version=current,
+                    last_check_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                )
+                
+                if has_update:
+                    # 使用 _on_check_update_done 回调方法
+                    self._settings_window._on_check_update_done(
+                        has_update=True,
+                        message=f"发现新版本: {latest}"
+                    )
+                else:
+                    self._settings_window._on_check_update_done(
+                        has_update=False,
+                        message="已是最新版本"
+                    )
+                    
+        except Exception as e:
+            print(f"[ERROR] 检查更新失败: {e}")
+            if self._settings_window:
+                self._settings_window._on_check_update_done(
+                    has_update=False,
+                    message=f"检查失败: {e}"
+                )
+    
+    def _on_perform_update(self):
+        """执行更新回调"""
+        if self._update_service:
+            success = self._update_service.perform_update()
+            if success:
+                print("[DEBUG] 更新脚本已启动")
+            else:
+                print("[ERROR] 启动更新脚本失败")
             
     def _restart(self):
         """重启应用"""
