@@ -260,6 +260,25 @@ class ProactiveDialogConfig:
 2. 可以对屏幕内容进行简短评论或提供帮助
 3. 保持简洁，不超过2-3句话
 4. 语气轻松友好，不要太正式"""
+
+
+@dataclass
+class UpdateConfig:
+    """更新配置"""
+    # 是否启用自动更新
+    enabled: bool = False
+    # 启动时检查更新
+    check_on_startup: bool = True
+    # 定时更新时间列表（HH:MM 格式）
+    scheduled_times: list = field(default_factory=lambda: ["12:00", "18:00"])
+    # 上次检查时间（ISO 8601 格式）
+    last_check_time: str = ""
+    # 更新后自动重启
+    auto_restart: bool = False
+    # GitHub 仓库地址
+    repo_url: str = "https://github.com/LargeCupPanda/Astrbot-desktop-assistant"
+    # 当前版本（从 git commit 获取）
+    current_version: str = ""
     
 
 @dataclass
@@ -273,6 +292,7 @@ class ClientConfig:
     interaction: InteractionConfig = field(default_factory=InteractionConfig)
     proactive: ProactiveDialogConfig = field(default_factory=ProactiveDialogConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
     # 会话 ID
     session_id: Optional[str] = None
     
@@ -388,6 +408,12 @@ class ClientConfig:
                     if hasattr(config.storage, key):
                         setattr(config.storage, key, value)
 
+            # 加载更新配置
+            if 'update' in data:
+                for key, value in data['update'].items():
+                    if hasattr(config.update, key):
+                        setattr(config.update, key, value)
+
             # 加载会话 ID
             config.session_id = data.get('session_id')
             
@@ -432,6 +458,7 @@ class ClientConfig:
                     'interaction': asdict(self.interaction),
                     'proactive': asdict(self.proactive),
                     'storage': asdict(self.storage),
+                    'update': asdict(self.update),
                     'session_id': self.session_id,
                 }
                 

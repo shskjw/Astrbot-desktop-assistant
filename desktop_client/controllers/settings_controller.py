@@ -8,6 +8,7 @@
 - 交互配置更新
 - 主动对话配置更新
 - 存储配置更新
+- 更新配置更新
 """
 
 import asyncio
@@ -37,6 +38,7 @@ class SettingsController(QObject):
         floating_ball: Optional[Any] = None,
         proactive_service: Optional[Any] = None,
         chat_history_manager: Optional[Any] = None,
+        update_service: Optional[Any] = None,
         parent: Optional[QObject] = None
     ):
         """
@@ -48,6 +50,7 @@ class SettingsController(QObject):
             floating_ball: 悬浮球窗口实例
             proactive_service: 主动对话服务实例
             chat_history_manager: 聊天记录管理器
+            update_service: 更新服务实例
             parent: 父对象
         """
         super().__init__(parent)
@@ -56,6 +59,7 @@ class SettingsController(QObject):
         self._floating_ball = floating_ball
         self._proactive_service = proactive_service
         self._chat_history_manager = chat_history_manager
+        self._update_service = update_service
         
     def set_bridge(self, bridge: "MessageBridge") -> None:
         """设置消息桥接"""
@@ -72,6 +76,10 @@ class SettingsController(QObject):
     def set_chat_history_manager(self, manager: Any) -> None:
         """设置聊天记录管理器"""
         self._chat_history_manager = manager
+    
+    def set_update_service(self, service: Any) -> None:
+        """设置更新服务"""
+        self._update_service = service
         
     def on_settings_changed(self, settings: Dict[str, Any]) -> None:
         """
@@ -99,6 +107,9 @@ class SettingsController(QObject):
         
         # 更新存储配置
         self._update_storage_settings(settings.get('storage', {}))
+        
+        # 更新更新配置
+        self._update_update_settings(settings.get('update', {}))
         
         # 保存配置到文件
         self._save_config()
@@ -255,6 +266,41 @@ class SettingsController(QObject):
                 except Exception as e:
                     logger.error(f"ChatHistoryManager 路径更新失败: {e}")
                     print(f"[ERROR] ChatHistoryManager 路径更新失败: {e}")
+    
+    def _update_update_settings(self, update: Dict[str, Any]) -> None:
+        """
+        更新更新配置
+        
+        Args:
+            update: 更新设置字典
+        """
+        if not update:
+            return
+        
+        # 更新配置对象
+        if 'enabled' in update:
+            self._config.update.enabled = update['enabled']
+        if 'check_on_startup' in update:
+            self._config.update.check_on_startup = update['check_on_startup']
+        if 'auto_restart' in update:
+            self._config.update.auto_restart = update['auto_restart']
+        if 'scheduled_times' in update:
+            self._config.update.scheduled_times = update['scheduled_times']
+        
+        # 更新更新服务配置
+        if self._update_service:
+            self._update_service.update_config(self._config.update)
+            
+            # 根据配置启动或停止定时检查
+            if self._config.update.enabled:
+                self._update_service.start_scheduled_checks()
+                print("[DEBUG] 更新定时检查已启动")
+            else:
+                self._update_service.stop_scheduled_checks()
+                print("[DEBUG] 更新定时检查已停止")
+        
+        print(f"[DEBUG] 更新配置已更新: enabled={self._config.update.enabled}, "
+              f"scheduled_times={self._config.update.scheduled_times}")
                     
     def _save_config(self) -> None:
         """保存配置到文件"""

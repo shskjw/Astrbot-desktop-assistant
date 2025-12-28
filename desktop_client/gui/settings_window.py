@@ -208,6 +208,7 @@ class SettingsWindow(QWidget):
         # 标签页
         self._tabs = QTabWidget()
         self._tabs.setObjectName("settingsTabs")
+        self._tabs.setUsesScrollButtons(False)  # 禁用标签栏滚动箭头
         
         # 服务器设置
         self._tabs.addTab(self._create_server_tab(), "服务器")
@@ -228,7 +229,10 @@ class SettingsWindow(QWidget):
         self._tabs.addTab(self._create_storage_tab(), "存储")
 
         # 自定义颜色设置
-        self._tabs.addTab(self._create_custom_colors_tab(), "自定义颜色")
+        self._tabs.addTab(self._create_custom_colors_tab(), "配色")
+
+        # 更新设置
+        self._tabs.addTab(self._create_update_tab(), "更新")
         
         main_layout.addWidget(self._tabs, 1)
         
@@ -959,6 +963,272 @@ class SettingsWindow(QWidget):
             self._chat_count_label.setText("当前共 0 条消息")
             QMessageBox.information(self, "成功", "聊天记录已清空。")
 
+    def _create_update_tab(self) -> QWidget:
+        """创建更新设置标签页"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # 滚动内容容器
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        # 基础设置
+        basic_section = SettingsSection("自动更新")
+        
+        self._update_enabled = QCheckBox("启用自动更新")
+        self._update_enabled.setToolTip("开启后，程序将自动检查并提示更新")
+        self._update_enabled.stateChanged.connect(self._on_update_enabled_toggle)
+        basic_section.add_widget(self._update_enabled)
+        
+        self._update_check_on_startup = QCheckBox("启动时检查更新")
+        self._update_check_on_startup.setToolTip("每次启动程序时自动检查是否有新版本")
+        basic_section.add_widget(self._update_check_on_startup)
+        
+        self._update_auto_restart = QCheckBox("更新后自动重启")
+        self._update_auto_restart.setToolTip("更新完成后自动重启程序以应用更新")
+        basic_section.add_widget(self._update_auto_restart)
+        
+        layout.addWidget(basic_section)
+        
+        # 定时更新设置
+        schedule_section = SettingsSection("定时检查")
+        
+        schedule_info = QLabel("设置每天自动检查更新的时间点（HH:MM 格式）：")
+        schedule_info.setWordWrap(True)
+        schedule_info.setObjectName("infoLabel")
+        schedule_section.add_widget(schedule_info)
+        
+        # 时间点列表容器
+        self._schedule_times_container = QFrame()
+        self._schedule_times_layout = QVBoxLayout(self._schedule_times_container)
+        self._schedule_times_layout.setContentsMargins(0, 0, 0, 0)
+        self._schedule_times_layout.setSpacing(8)
+        schedule_section.add_widget(self._schedule_times_container)
+        
+        # 存储时间编辑器列表
+        self._schedule_time_editors = []
+        
+        # 添加时间按钮
+        add_time_btn_row = QFrame()
+        add_time_btn_layout = QHBoxLayout(add_time_btn_row)
+        add_time_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._add_schedule_time_btn = QPushButton("添加时间点")
+        self._add_schedule_time_btn.setToolTip("添加一个新的定时检查时间点")
+        self._add_schedule_time_btn.clicked.connect(self._on_add_schedule_time)
+        # 设置添加图标
+        add_icon = icon_manager.get_icon('plus', '#409EFF', 16)
+        self._add_schedule_time_btn.setIcon(add_icon)
+        self._add_schedule_time_btn.setIconSize(QSize(16, 16))
+        
+        add_time_btn_layout.addWidget(self._add_schedule_time_btn)
+        add_time_btn_layout.addStretch()
+        
+        schedule_section.add_widget(add_time_btn_row)
+        
+        layout.addWidget(schedule_section)
+        
+        # 版本信息
+        version_section = SettingsSection("版本信息")
+        
+        # 当前版本
+        self._current_version_label = QLabel("当前版本：获取中...")
+        self._current_version_label.setObjectName("settingLabel")
+        version_section.add_widget(self._current_version_label)
+        
+        # 上次检查时间
+        self._last_check_label = QLabel("上次检查：从未检查")
+        self._last_check_label.setObjectName("infoLabel")
+        version_section.add_widget(self._last_check_label)
+        
+        layout.addWidget(version_section)
+        
+        # 手动操作
+        action_section = SettingsSection("手动操作")
+        
+        action_btn_row = QFrame()
+        action_btn_layout = QHBoxLayout(action_btn_row)
+        action_btn_layout.setContentsMargins(0, 0, 0, 0)
+        action_btn_layout.setSpacing(12)
+        
+        self._check_update_btn = QPushButton("立即检查更新")
+        self._check_update_btn.setToolTip("检查是否有新版本可用")
+        self._check_update_btn.clicked.connect(self._on_check_update)
+        # 设置检查图标
+        check_icon = icon_manager.get_icon('refresh-cw', '#409EFF', 16)
+        self._check_update_btn.setIcon(check_icon)
+        self._check_update_btn.setIconSize(QSize(16, 16))
+        
+        self._perform_update_btn = QPushButton("立即更新")
+        self._perform_update_btn.setObjectName("saveBtn")
+        self._perform_update_btn.setToolTip("执行更新操作（将打开更新脚本）")
+        self._perform_update_btn.clicked.connect(self._on_perform_update)
+        # 设置更新图标
+        update_icon = icon_manager.get_icon('download', '#FFFFFF', 16)
+        self._perform_update_btn.setIcon(update_icon)
+        self._perform_update_btn.setIconSize(QSize(16, 16))
+        
+        action_btn_layout.addWidget(self._check_update_btn)
+        action_btn_layout.addWidget(self._perform_update_btn)
+        action_btn_layout.addStretch()
+        
+        action_section.add_widget(action_btn_row)
+        
+        # 更新状态显示
+        self._update_status_label = QLabel("")
+        self._update_status_label.setWordWrap(True)
+        self._update_status_label.setObjectName("infoLabel")
+        action_section.add_widget(self._update_status_label)
+        
+        layout.addWidget(action_section)
+        
+        # 说明信息
+        info_section = SettingsSection("功能说明")
+        info_label = QLabel(
+            "• 启用自动更新后，程序将在定时时间点自动检查 GitHub 上是否有新版本。\n"
+            "• 检测到更新时，会弹出提示通知您。\n"
+            "• 点击「立即更新」将运行 update.bat/update.sh 脚本执行更新。\n"
+            "• 更新过程中请勿关闭更新窗口，更新完成后程序将自动重启（如已启用）。"
+        )
+        info_label.setWordWrap(True)
+        info_label.setObjectName("infoLabel")
+        info_section.add_widget(info_label)
+        
+        layout.addWidget(info_section)
+        layout.addStretch()
+        
+        # 设置滚动内容
+        scroll_area.setWidget(scroll_content)
+        tab_layout.addWidget(scroll_area)
+        
+        return tab
+    
+    def _on_update_enabled_toggle(self, state):
+        """自动更新开关变化"""
+        enabled = state == Qt.CheckState.Checked.value
+        self._update_check_on_startup.setEnabled(enabled)
+        self._update_auto_restart.setEnabled(enabled)
+        self._add_schedule_time_btn.setEnabled(enabled)
+        # 更新所有时间编辑器的状态
+        for time_row in self._schedule_time_editors:
+            time_row['editor'].setEnabled(enabled)
+            time_row['remove_btn'].setEnabled(enabled)
+    
+    def _on_add_schedule_time(self):
+        """添加定时检查时间点"""
+        self._add_schedule_time_row(QTime(12, 0))
+    
+    def _add_schedule_time_row(self, time: QTime):
+        """添加一个时间点行"""
+        row = QFrame()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        
+        time_edit = QTimeEdit()
+        time_edit.setDisplayFormat("HH:mm")
+        time_edit.setTime(time)
+        time_edit.setEnabled(self._update_enabled.isChecked())
+        
+        remove_btn = QPushButton()
+        remove_btn.setFixedSize(24, 24)
+        remove_btn.setToolTip("删除此时间点")
+        remove_btn.setEnabled(self._update_enabled.isChecked())
+        # 设置删除图标
+        close_icon = icon_manager.get_icon('close', '#FF3B30', 14)
+        remove_btn.setIcon(close_icon)
+        remove_btn.setIconSize(QSize(14, 14))
+        
+        row_layout.addWidget(time_edit)
+        row_layout.addWidget(remove_btn)
+        row_layout.addStretch()
+        
+        # 记录信息
+        time_row_info = {
+            'row': row,
+            'editor': time_edit,
+            'remove_btn': remove_btn
+        }
+        self._schedule_time_editors.append(time_row_info)
+        
+        # 连接删除按钮
+        remove_btn.clicked.connect(lambda: self._on_remove_schedule_time(time_row_info))
+        
+        self._schedule_times_layout.addWidget(row)
+    
+    def _on_remove_schedule_time(self, time_row_info: dict):
+        """删除时间点"""
+        if time_row_info in self._schedule_time_editors:
+            self._schedule_time_editors.remove(time_row_info)
+            time_row_info['row'].deleteLater()
+    
+    def _on_check_update(self):
+        """立即检查更新"""
+        self._check_update_btn.setEnabled(False)
+        self._check_update_btn.setText("检查中...")
+        self._update_status_label.setText("正在检查更新...")
+        
+        # 发射信号或调用服务
+        # 这里通过信号通知主应用进行检查
+        if hasattr(self, '_update_check_callback') and self._update_check_callback:
+            self._update_check_callback()
+        else:
+            # 没有回调时，显示提示
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1000, self._on_check_update_done)
+    
+    def _on_check_update_done(self, has_update: bool = False, message: str = ""):
+        """检查更新完成回调"""
+        self._check_update_btn.setEnabled(True)
+        self._check_update_btn.setText("立即检查更新")
+        
+        if message:
+            self._update_status_label.setText(message)
+        elif has_update:
+            self._update_status_label.setText("发现新版本可用！点击「立即更新」进行更新。")
+        else:
+            self._update_status_label.setText("当前已是最新版本。")
+        
+        # 更新上次检查时间
+        from datetime import datetime
+        self._last_check_label.setText(f"上次检查：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    def _on_perform_update(self):
+        """立即执行更新"""
+        reply = QMessageBox.question(
+            self,
+            "确认更新",
+            "确定要执行更新吗？\n\n更新过程将：\n1. 打开更新脚本窗口\n2. 从 GitHub 拉取最新代码\n3. 更新依赖项\n\n如果启用了「更新后自动重启」，程序将在更新完成后自动重启。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self._update_status_label.setText("正在启动更新...")
+            if hasattr(self, '_update_perform_callback') and self._update_perform_callback:
+                self._update_perform_callback()
+            else:
+                QMessageBox.information(self, "提示", "更新服务未初始化，请保存设置后重启程序。")
+    
+    def set_update_callbacks(self, check_callback, perform_callback):
+        """设置更新回调函数"""
+        self._update_check_callback = check_callback
+        self._update_perform_callback = perform_callback
+    
+    def update_version_info(self, current_version: str, last_check_time: str = ""):
+        """更新版本信息显示"""
+        self._current_version_label.setText(f"当前版本：{current_version or '未知'}")
+        if last_check_time:
+            self._last_check_label.setText(f"上次检查：{last_check_time}")
+
     def _create_proactive_tab(self) -> QWidget:
         """创建主动对话设置标签页"""
         tab = QWidget()
@@ -1446,6 +1716,46 @@ class SettingsWindow(QWidget):
             self._custom_colors_enabled.setChecked(False)
             for picker in self._color_pickers.values():
                 picker.setEnabled(False)
+        
+        # 更新设置
+        if hasattr(self.config, 'update'):
+            self._update_enabled.setChecked(self.config.update.enabled)
+            self._update_check_on_startup.setChecked(self.config.update.check_on_startup)
+            self._update_auto_restart.setChecked(self.config.update.auto_restart)
+            
+            # 加载定时时间列表
+            for time_str in self.config.update.scheduled_times:
+                time = QTime.fromString(time_str, "HH:mm")
+                if time.isValid():
+                    self._add_schedule_time_row(time)
+            
+            # 如果没有配置时间，添加默认时间
+            if not self.config.update.scheduled_times:
+                self._add_schedule_time_row(QTime(12, 0))
+                self._add_schedule_time_row(QTime(18, 0))
+            
+            # 更新版本信息
+            if self.config.update.current_version:
+                self._current_version_label.setText(f"当前版本：{self.config.update.current_version}")
+            if self.config.update.last_check_time:
+                self._last_check_label.setText(f"上次检查：{self.config.update.last_check_time}")
+            
+            # 根据启用状态设置控件可用性
+            enabled = self.config.update.enabled
+            self._update_check_on_startup.setEnabled(enabled)
+            self._update_auto_restart.setEnabled(enabled)
+            self._add_schedule_time_btn.setEnabled(enabled)
+        else:
+            # 默认值
+            self._update_enabled.setChecked(False)
+            self._update_check_on_startup.setChecked(True)
+            self._update_auto_restart.setChecked(False)
+            self._add_schedule_time_row(QTime(12, 0))
+            self._add_schedule_time_row(QTime(18, 0))
+            # 禁用相关控件
+            self._update_check_on_startup.setEnabled(False)
+            self._update_auto_restart.setEnabled(False)
+            self._add_schedule_time_btn.setEnabled(False)
                 
     def _on_theme_selected(self, index: int):
         """主题选择变化"""
@@ -1622,6 +1932,15 @@ class SettingsWindow(QWidget):
                 'chat_history_path': self._chat_history_path.text().strip(),
             },
             'custom_theme': self._build_custom_theme_config(),
+            'update': {
+                'enabled': self._update_enabled.isChecked(),
+                'check_on_startup': self._update_check_on_startup.isChecked(),
+                'auto_restart': self._update_auto_restart.isChecked(),
+                'scheduled_times': [
+                    row['editor'].time().toString("HH:mm")
+                    for row in self._schedule_time_editors
+                ],
+            },
         }
         
         # 更新配置对象
@@ -1671,6 +1990,13 @@ class SettingsWindow(QWidget):
             # 存储
             self.config.storage.image_save_path = settings['storage']['image_save_path']
             self.config.storage.chat_history_path = settings['storage']['chat_history_path']
+            
+            # 更新设置
+            if 'update' in settings:
+                self.config.update.enabled = settings['update']['enabled']
+                self.config.update.check_on_startup = settings['update']['check_on_startup']
+                self.config.update.auto_restart = settings['update']['auto_restart']
+                self.config.update.scheduled_times = settings['update']['scheduled_times']
             
             # 自定义颜色
             custom_theme_config = settings['custom_theme']
