@@ -1,84 +1,73 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal EnableDelayedExpansion
 
 :: ============================================================================
-:: AstrBot Desktop Assistant - Windows 傻瓜式一键安装脚本
+:: AstrBot Desktop Assistant - Windows Quick Install Script
 :: ============================================================================
-:: 特点：
-::   1. 只需选择网络环境（海外/国内）
-::   2. 自动测试并选择最快的加速代理
-::   3. 全自动完成所有安装步骤
-::   4. 自动创建桌面快捷方式和开机自启
+:: Features:
+::   1. Simple network environment selection (Direct/Proxy)
+::   2. Auto-detect and select fastest proxy
+::   3. Fully automated installation
+::   4. Auto-create desktop shortcut and autostart
 :: ============================================================================
 
-title AstrBot Desktop Assistant 一键安装
+title AstrBot Desktop Assistant Quick Install
 
-:: 颜色定义
-set "GREEN=[92m"
-set "YELLOW=[93m"
-set "RED=[91m"
-set "CYAN=[96m"
-set "WHITE=[97m"
-set "RESET=[0m"
-
-:: GitHub 仓库地址
+:: GitHub repository URL
 set "GITHUB_REPO=https://github.com/muyouzhi6/Astrbot-desktop-assistant.git"
 
-:: 加速代理列表（使用 ping 测试）
+:: Proxy list for China users
 set "PROXY_HOSTS=gh.llkk.cc gh-proxy.com mirror.ghproxy.com ghproxy.net"
 
 echo.
-echo %CYAN%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %CYAN%║                                                                      ║%RESET%
-echo %CYAN%║          %WHITE%AstrBot Desktop Assistant 一键安装脚本%CYAN%                      ║%RESET%
-echo %CYAN%║                                                                      ║%RESET%
-echo %CYAN%║          %GREEN%✓ 傻瓜式安装，只需一个选择！%CYAN%                                ║%RESET%
-echo %CYAN%║                                                                      ║%RESET%
-echo %CYAN%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo ======================================================================
+echo         AstrBot Desktop Assistant Quick Install Script
+echo ======================================================================
+echo.
+echo         + One-click installation, just one choice!
 echo.
 
 :: ============================================================================
-:: 唯一的用户选择：网络环境
+:: Network environment selection
 :: ============================================================================
-echo %WHITE%请选择您的网络环境：%RESET%
+echo Select your network environment:
 echo.
-echo   %CYAN%[1]%RESET% 我有海外网络环境（可直接访问 GitHub）
-echo   %CYAN%[2]%RESET% 我没有海外网络（使用国内加速，推荐大多数用户）
+echo   1 - Direct access to GitHub - overseas network
+echo   2 - Use proxy - recommended for China users
 echo.
-set /p "NETWORK_CHOICE=请输入选择 [1/2]: "
+set /p "NETWORK_CHOICE=Select 1 or 2: "
 
 if "!NETWORK_CHOICE!"=="1" (
     set "USE_PROXY=0"
     echo.
-    echo %GREEN%✓ 将使用 GitHub 直连%RESET%
+    echo + Using direct GitHub connection
 ) else (
     set "USE_PROXY=1"
     echo.
-    echo %CYAN%正在自动测试加速代理，请稍候...%RESET%
+    echo Testing proxy servers, please wait...
 )
 
 set "CLONE_URL=%GITHUB_REPO%"
 set "BEST_PROXY="
 
 :: ============================================================================
-:: 自动测试代理延迟（使用 ping）
+:: Auto-test proxy latency (using ping)
 :: ============================================================================
 if "!USE_PROXY!"=="1" (
     echo.
     set "MIN_TIME=9999"
     
     for %%H in (%PROXY_HOSTS%) do (
-        echo   测试 %%H ...
+        echo   Testing %%H ...
         
-        :: 使用 ping 测试，提取平均延迟
-        for /f "tokens=*" %%R in ('ping -n 1 -w 3000 %%H 2^>nul ^| findstr /i "平均 Average"') do (
+        :: Use ping to test, extract average latency
+        for /f "tokens=*" %%R in ('ping -n 1 -w 3000 %%H 2^>nul ^| findstr /i "Average"') do (
             set "PING_RESULT=%%R"
         )
         
-        :: 提取延迟数值
+        :: Extract latency value
         set "LATENCY=9999"
-        for /f "tokens=*" %%L in ('ping -n 1 -w 3000 %%H 2^>nul ^| findstr /i "时间=" ^| findstr /r "[0-9]*ms"') do (
+        for /f "tokens=*" %%L in ('ping -n 1 -w 3000 %%H 2^>nul ^| findstr /i "time=" ^| findstr /r "[0-9]*ms"') do (
             for /f "tokens=2 delims==" %%T in ("%%L") do (
                 for /f "tokens=1 delims=m" %%M in ("%%T") do (
                     set "LATENCY=%%M"
@@ -86,65 +75,63 @@ if "!USE_PROXY!"=="1" (
             )
         )
         
-        :: 备用方法：检测是否能 ping 通
+        :: Fallback: check if ping succeeds
         ping -n 1 -w 3000 %%H >nul 2>&1
         if !ERRORLEVEL! EQU 0 (
             if !LATENCY! LSS !MIN_TIME! (
                 set "MIN_TIME=!LATENCY!"
                 set "BEST_PROXY=%%H"
-                echo     %GREEN%✓ 可用 (!LATENCY! ms)%RESET%
+                echo     + Available - !LATENCY! ms
             ) else (
-                echo     %GREEN%✓ 可用%RESET%
+                echo     + Available
             )
         ) else (
-            echo     %RED%✗ 不可用%RESET%
+            echo     X Unavailable
         )
     )
     
     if defined BEST_PROXY (
         echo.
-        echo %GREEN%✓ 已选择最快代理: !BEST_PROXY!%RESET%
+        echo + Selected fastest proxy: !BEST_PROXY!
         set "CLONE_URL=https://!BEST_PROXY!/!GITHUB_REPO!"
     ) else (
         echo.
-        echo %YELLOW%⚠ 所有代理均不可用，将尝试直连 GitHub%RESET%
+        echo ! All proxies unavailable, trying direct connection
         set "CLONE_URL=%GITHUB_REPO%"
     )
 )
 
 :: ============================================================================
-:: 检测 Git
+:: Check Git
 :: ============================================================================
 echo.
-echo %CYAN%[1/6]%RESET% 检测 Git 环境...
+echo Step 1 of 6 - Checking Git environment...
 
 git --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo %RED%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-    echo %RED%║  ✗ 未检测到 Git，请先安装 Git 后重试                                 ║%RESET%
-    echo %RED%╠══════════════════════════════════════════════════════════════════════╣%RESET%
-    echo %RED%║                                                                      ║%RESET%
-    echo %RED%║  下载地址：https://git-scm.com/downloads                             ║%RESET%
-    echo %RED%║                                                                      ║%RESET%
-    echo %RED%║  安装时保持默认选项即可                                              ║%RESET%
-    echo %RED%║                                                                      ║%RESET%
-    echo %RED%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+    echo ======================================================================
+    echo   X Git not detected. Please install Git first.
+    echo ======================================================================
+    echo.
+    echo   Download: https://git-scm.com/downloads
+    echo.
+    echo   Keep default options during installation.
     echo.
     pause
     exit /b 1
 )
-echo %GREEN%✓ Git 已安装%RESET%
+echo + Git is installed
 
 :: ============================================================================
-:: 检测 Python
+:: Check Python
 :: ============================================================================
 echo.
-echo %CYAN%[2/6]%RESET% 检测 Python 环境...
+echo Step 2 of 6 - Checking Python environment...
 
 set "PYTHON_CMD="
 
-:: 尝试多种方式查找 Python
+:: Try multiple ways to find Python
 python --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     set "PYTHON_CMD=python"
@@ -163,7 +150,7 @@ if %ERRORLEVEL% EQU 0 (
     goto :python_found
 )
 
-:: 检查常见安装路径
+:: Check common installation paths
 for %%P in (
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
@@ -178,61 +165,59 @@ for %%P in (
     )
 )
 
-:: 未找到 Python
+:: Python not found
 echo.
-echo %RED%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %RED%║  ✗ 未检测到 Python 3.10+，请先安装 Python 后重试                     ║%RESET%
-echo %RED%╠══════════════════════════════════════════════════════════════════════╣%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%║  下载地址：https://www.python.org/downloads/                         ║%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%║  ⚠ 安装时务必勾选 "Add Python to PATH"                               ║%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo ======================================================================
+echo   X Python 3.10+ not detected. Please install Python first.
+echo ======================================================================
+echo.
+echo   Download: https://www.python.org/downloads/
+echo.
+echo   ! Make sure to check "Add Python to PATH" during installation
 echo.
 pause
 exit /b 1
 
 :python_found
-:: 获取 Python 版本
+:: Get Python version
 for /f "tokens=2" %%V in ('!PYTHON_CMD! --version 2^>^&1') do set "PYTHON_VERSION=%%V"
-echo %GREEN%✓ Python %PYTHON_VERSION% 已安装%RESET%
+echo + Python %PYTHON_VERSION% is installed
 
-:: 检查版本是否满足要求 (>= 3.10)
+:: Check version meets requirements (>= 3.10)
 for /f "tokens=1,2 delims=." %%A in ("%PYTHON_VERSION%") do (
     set "PY_MAJOR=%%A"
     set "PY_MINOR=%%B"
 )
 if %PY_MAJOR% LSS 3 (
-    echo %RED%✗ Python 版本过低，需要 3.10 或更高版本%RESET%
+    echo X Python version too low, requires 3.10 or higher
     pause
     exit /b 1
 )
 if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 10 (
-    echo %RED%✗ Python 版本过低，需要 3.10 或更高版本%RESET%
+    echo X Python version too low, requires 3.10 or higher
     pause
     exit /b 1
 )
 
 :: ============================================================================
-:: 克隆项目
+:: Clone project
 :: ============================================================================
 echo.
-echo %CYAN%[3/6]%RESET% 下载项目...
+echo Step 3 of 6 - Downloading project...
 
 set "PROJECT_DIR=%CD%\Astrbot-desktop-assistant"
 
 if exist "!PROJECT_DIR!\.git" (
-    echo 检测到已有项目，正在更新...
+    echo Existing project detected, updating...
     cd /d "!PROJECT_DIR!"
     git pull
     if !ERRORLEVEL! NEQ 0 (
-        echo %YELLOW%⚠ 更新失败，尝试重新克隆...%RESET%
+        echo ! Update failed, trying to re-clone...
         cd /d "%CD%"
         rmdir /s /q "!PROJECT_DIR!" 2>nul
         goto :clone_project
     )
-    echo %GREEN%✓ 项目更新完成%RESET%
+    echo + Project updated
     goto :after_clone
 )
 
@@ -241,71 +226,71 @@ if exist "!PROJECT_DIR!" (
     rmdir /s /q "!PROJECT_DIR!" 2>nul
 )
 
-echo 正在下载项目（使用浅克隆加速）...
-echo 下载地址: !CLONE_URL!
+echo Downloading project using shallow clone...
+echo Download URL: !CLONE_URL!
 echo.
 
 git clone --depth 1 "!CLONE_URL!" "!PROJECT_DIR!"
 
 if !ERRORLEVEL! NEQ 0 (
     echo.
-    echo %YELLOW%⚠ 下载失败，尝试直连 GitHub...%RESET%
+    echo ! Download failed, trying direct GitHub connection...
     git clone --depth 1 "%GITHUB_REPO%" "!PROJECT_DIR!"
     
     if !ERRORLEVEL! NEQ 0 (
-        echo %RED%✗ 下载失败，请检查网络连接%RESET%
+        echo X Download failed. Please check network connection.
         pause
         exit /b 1
     )
 )
 
-echo %GREEN%✓ 项目下载完成%RESET%
+echo + Project downloaded
 
 :after_clone
 cd /d "!PROJECT_DIR!"
 
-:: 显示版本信息
+:: Display version info
 echo.
-echo %CYAN%版本信息：%RESET%
+echo Version Info:
 for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h %%ci %%s"`) do (
-    echo   最新提交: %%i
+    echo   Latest commit: %%i
 )
 
 :: ============================================================================
-:: 创建虚拟环境并安装依赖
+:: Create virtual environment and install dependencies
 :: ============================================================================
 echo.
-echo %CYAN%[4/6]%RESET% 配置 Python 环境...
+echo Step 4 of 6 - Configuring Python environment...
 
 set "VENV_DIR=!PROJECT_DIR!\venv"
 
 if exist "!VENV_DIR!\Scripts\python.exe" (
-    echo %GREEN%✓ 虚拟环境已存在%RESET%
+    echo + Virtual environment already exists
 ) else (
-    echo 正在创建虚拟环境...
+    echo Creating virtual environment...
     "!PYTHON_CMD!" -m venv "!VENV_DIR!"
     if !ERRORLEVEL! NEQ 0 (
-        echo %YELLOW%⚠ 创建虚拟环境失败，将使用系统 Python%RESET%
+        echo ! Failed to create virtual environment, using system Python
     ) else (
-        echo %GREEN%✓ 虚拟环境创建成功%RESET%
+        echo + Virtual environment created
     )
 )
 
-:: 设置 Python 路径
+:: Set Python path
 if exist "!VENV_DIR!\Scripts\python.exe" (
     set "PYTHON_CMD=!VENV_DIR!\Scripts\python.exe"
 )
 
 echo.
-echo %CYAN%[5/6]%RESET% 安装依赖包（这可能需要几分钟）...
+echo Step 5 of 6 - Installing dependencies - this may take a few minutes...
 
-:: 升级 pip
+:: Upgrade pip
 "!PYTHON_CMD!" -m pip install --upgrade pip -q 2>nul
 
-:: 安装依赖
+:: Install dependencies
 "!PYTHON_CMD!" -m pip install -r "!PROJECT_DIR!\requirements.txt" -q
 if !ERRORLEVEL! NEQ 0 (
-    echo %YELLOW%⚠ 部分依赖安装失败，尝试逐个安装核心依赖...%RESET%
+    echo ! Some dependencies failed, trying to install core dependencies individually...
     
     for %%D in (
         "PySide6>=6.5.0"
@@ -316,24 +301,24 @@ if !ERRORLEVEL! NEQ 0 (
         "mss>=9.0.0"
         "pynput>=1.7.0"
     ) do (
-        echo   安装 %%~D...
+        echo   Installing %%~D...
         "!PYTHON_CMD!" -m pip install %%~D -q 2>nul
     )
 )
 
-echo %GREEN%✓ 依赖安装完成%RESET%
+echo + Dependencies installed
 
 :: ============================================================================
-:: 自动配置（桌面快捷方式 + 开机自启）
+:: Auto configuration (desktop shortcut + autostart)
 :: ============================================================================
 echo.
-echo %CYAN%[6/6]%RESET% 自动配置...
+echo Step 6 of 6 - Auto configuration...
 
-:: 创建桌面快捷方式
+:: Create desktop shortcut
 set "SHORTCUT_VBS=%TEMP%\create_shortcut.vbs"
 set "DESKTOP=%USERPROFILE%\Desktop"
 
-:: 使用虚拟环境的 pythonw.exe
+:: Use virtual environment pythonw.exe
 if exist "!VENV_DIR!\Scripts\pythonw.exe" (
     set "TARGET_SCRIPT=!VENV_DIR!\Scripts\pythonw.exe"
     set "ARGUMENTS=-m desktop_client"
@@ -357,55 +342,51 @@ cscript //nologo "!SHORTCUT_VBS!" 2>nul
 del "!SHORTCUT_VBS!" 2>nul
 
 if exist "!DESKTOP!\AstrBot Desktop Assistant.lnk" (
-    echo %GREEN%✓ 桌面快捷方式已创建%RESET%
+    echo + Desktop shortcut created
 ) else (
-    echo %YELLOW%⚠ 桌面快捷方式创建失败%RESET%
+    echo ! Failed to create desktop shortcut
 )
 
-:: 配置开机自启
-echo 正在配置开机自启...
+:: Configure autostart
+echo Configuring autostart...
 "!PYTHON_CMD!" -c "from desktop_client.platforms import get_platform_adapter; adapter = get_platform_adapter(); result = adapter.enable_autostart(); print(result.message if result else '')" 2>nul
 
 if !ERRORLEVEL! EQU 0 (
-    echo %GREEN%✓ 开机自启已配置%RESET%
+    echo + Autostart configured
 ) else (
-    echo %YELLOW%⚠ 开机自启配置失败，可稍后在设置中开启%RESET%
+    echo ! Autostart configuration failed, can be enabled later in settings
 )
 
 :: ============================================================================
-:: 安装完成
+:: Installation complete
 :: ============================================================================
 echo.
-echo %GREEN%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%║                    ✓ 安装成功！                                      ║%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%╠══════════════════════════════════════════════════════════════════════╣%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%║  项目目录: !PROJECT_DIR!      ║%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%║  启动方式:                                                           ║%RESET%
-echo %GREEN%║    • 双击桌面快捷方式 "AstrBot Desktop Assistant"                    ║%RESET%
-echo %GREEN%║    • 或运行 start.bat                                                ║%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo ======================================================================
+echo                     + Installation Successful!
+echo ======================================================================
+echo.
+echo   Project directory: !PROJECT_DIR!
+echo.
+echo   How to start:
+echo     - Double-click desktop shortcut "AstrBot Desktop Assistant"
+echo     - Or run start.bat
 echo.
 
-:: 询问是否立即启动
-echo 是否立即启动 AstrBot Desktop Assistant？
-echo   %CYAN%[1]%RESET% 是
-echo   %CYAN%[2]%RESET% 否
+:: Ask whether to start immediately
+echo Start AstrBot Desktop Assistant now?
+echo   1 - Yes
+echo   2 - No
 echo.
-set /p "START_CHOICE=请选择 [1/2]: "
+set /p "START_CHOICE=Select 1 or 2: "
 
 if "!START_CHOICE!"=="1" (
     echo.
-    echo 正在启动...
+    echo Starting...
     start "" "!PYTHON_CMD!" -m desktop_client
-    echo %GREEN%✓ 应用已启动%RESET%
+    echo + Application started
 )
 
 echo.
-echo %CYAN%感谢使用 AstrBot Desktop Assistant！%RESET%
+echo Thank you for using AstrBot Desktop Assistant!
 echo.
 pause

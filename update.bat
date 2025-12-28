@@ -1,26 +1,25 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal EnableDelayedExpansion
 
 :: ============================================================================
-:: AstrBot Desktop Assistant - Windows 一键更新脚本
+:: AstrBot Desktop Assistant - Windows Update Script
 :: ============================================================================
-:: 特点：
-::   1. 支持双模式更新：Git（最新版）/ Release（稳定版）
-::   2. 只需选择网络环境（海外/国内）
-::   3. 自动检测项目目录
-::   4. 自动更新代码和依赖
-::   5. 显示版本变化
+:: Features:
+::   1. Dual update modes: Git (latest) / Release (stable)
+::   2. Network environment selection (Direct/Proxy)
+::   3. Auto-detect project directory (supports ZIP installation)
+::   4. Auto-update code and dependencies
+::   5. Show version changes
 :: ============================================================================
-:: 用法：
-::   update.bat                    - 默认使用 Git 模式更新到最新代码
-::   update.bat git                - 使用 Git 模式更新到最新代码
-::   update.bat release v1.0.0     - 使用 Release 模式更新到指定版本
+:: Usage:
+::   update.bat                    - Default: Git mode for latest code
+::   update.bat git                - Git mode for latest code
+::   update.bat release v1.0.0     - Release mode for specific version
 :: ============================================================================
 
-title AstrBot Desktop Assistant 一键更新
+title AstrBot Desktop Assistant Update
 
-:: 解析命令行参数
+:: Parse command line arguments
 set "UPDATE_MODE=git"
 set "TARGET_VERSION="
 
@@ -31,231 +30,303 @@ if not "%~2"=="" (
     set "TARGET_VERSION=%~2"
 )
 
-:: 验证参数
+:: Validate arguments
 if /i "!UPDATE_MODE!"=="release" (
     if "!TARGET_VERSION!"=="" (
         echo.
-        echo [91m错误: Release 模式需要指定版本号[0m
-        echo 用法: update.bat release v1.0.0
+        echo X Error: Release mode requires version number
+        echo Usage: update.bat release v1.0.0
         echo.
         pause
         exit /b 1
     )
 )
 
-:: 颜色定义
-set "GREEN=[92m"
-set "YELLOW=[93m"
-set "RED=[91m"
-set "CYAN=[96m"
-set "WHITE=[97m"
-set "RESET=[0m"
-
-:: 加速代理列表
+:: Proxy list for China users
 set "PROXY_HOSTS=gh.llkk.cc gh-proxy.com mirror.ghproxy.com ghproxy.net"
 
 echo.
-echo %CYAN%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %CYAN%║                                                                      ║%RESET%
-echo %CYAN%║          %WHITE%AstrBot Desktop Assistant 一键更新脚本%CYAN%                      ║%RESET%
-echo %CYAN%║                                                                      ║%RESET%
-echo %CYAN%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo ======================================================================
+echo         AstrBot Desktop Assistant Update Script
+echo ======================================================================
 echo.
 
-:: 显示更新模式
+:: Display update mode
 if /i "!UPDATE_MODE!"=="release" (
-    echo %YELLOW%更新模式: Release（稳定版）- 目标版本: !TARGET_VERSION!%RESET%
+    echo ! Update Mode: Release - Stable - Target: !TARGET_VERSION!
 ) else (
-    echo %GREEN%更新模式: Git（最新版）%RESET%
+    echo + Update Mode: Git - Latest
 )
 echo.
 
 :: ============================================================================
-:: 检测项目目录
+:: Detect project directory
 :: ============================================================================
-echo %CYAN%[1/5]%RESET% 检测项目目录...
+echo Step 1 of 5 - Detecting project directory...
 
 set "PROJECT_DIR="
+set "HAS_GIT=0"
 
-:: 检查当前目录
+:: Check current directory - with .git
 if exist "%CD%\.git" (
     if exist "%CD%\desktop_client" (
         set "PROJECT_DIR=%CD%"
+        set "HAS_GIT=1"
         goto :project_found
     )
 )
 
-:: 检查当前目录下的 Astrbot-desktop-assistant 子目录
+:: Check current directory - without .git (ZIP installation)
+if exist "%CD%\desktop_client" (
+    if exist "%CD%\requirements.txt" (
+        set "PROJECT_DIR=%CD%"
+        set "HAS_GIT=0"
+        goto :project_found
+    )
+)
+
+:: Check Astrbot-desktop-assistant subdirectory - with .git
 if exist "%CD%\Astrbot-desktop-assistant\.git" (
     set "PROJECT_DIR=%CD%\Astrbot-desktop-assistant"
+    set "HAS_GIT=1"
     goto :project_found
 )
 
-:: 检查父目录
+:: Check Astrbot-desktop-assistant subdirectory - without .git
+if exist "%CD%\Astrbot-desktop-assistant\desktop_client" (
+    set "PROJECT_DIR=%CD%\Astrbot-desktop-assistant"
+    set "HAS_GIT=0"
+    goto :project_found
+)
+
+:: Check Astrbot-desktop-assistant-main subdirectory (GitHub ZIP default name)
+if exist "%CD%\Astrbot-desktop-assistant-main\.git" (
+    set "PROJECT_DIR=%CD%\Astrbot-desktop-assistant-main"
+    set "HAS_GIT=1"
+    goto :project_found
+)
+
+if exist "%CD%\Astrbot-desktop-assistant-main\desktop_client" (
+    set "PROJECT_DIR=%CD%\Astrbot-desktop-assistant-main"
+    set "HAS_GIT=0"
+    goto :project_found
+)
+
+:: Check parent directory
 for %%D in ("%CD%\..") do (
     if exist "%%~fD\.git" (
         if exist "%%~fD\desktop_client" (
             set "PROJECT_DIR=%%~fD"
+            set "HAS_GIT=1"
+            goto :project_found
+        )
+    )
+    if exist "%%~fD\desktop_client" (
+        if exist "%%~fD\requirements.txt" (
+            set "PROJECT_DIR=%%~fD"
+            set "HAS_GIT=0"
             goto :project_found
         )
     )
 )
 
-:: 未找到项目
+:: Project not found
 echo.
-echo %RED%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %RED%║  ✗ 未找到 AstrBot Desktop Assistant 项目                             ║%RESET%
-echo %RED%╠══════════════════════════════════════════════════════════════════════╣%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%║  请确保：                                                            ║%RESET%
-echo %RED%║    • 在项目目录中运行此脚本                                          ║%RESET%
-echo %RED%║    • 或在包含 Astrbot-desktop-assistant 文件夹的目录中运行           ║%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%║  如果尚未安装，请先运行 quick_install.bat                            ║%RESET%
-echo %RED%║                                                                      ║%RESET%
-echo %RED%╚══════════════════════════════════════════════════════════════════════╝%RESET%
+echo ======================================================================
+echo   X Project not found: AstrBot Desktop Assistant
+echo ======================================================================
+echo.
+echo Please ensure:
+echo   - Run this script in the project directory
+echo   - Or in a directory containing Astrbot-desktop-assistant folder
+echo.
+echo If not installed yet, run quick_install.bat first
 echo.
 pause
 exit /b 1
 
 :project_found
-echo %GREEN%✓ 找到项目目录: !PROJECT_DIR!%RESET%
+echo + Found project: !PROJECT_DIR!
+
+:: Check if Git is available
+if "!HAS_GIT!"=="0" (
+    echo ! No .git directory found - ZIP installation detected
+    echo.
+    echo Options:
+    echo   1 - Initialize Git repository - recommended for future updates
+    echo   2 - Skip update - manual download required
+    echo.
+    set /p "GIT_CHOICE=Select 1 or 2: "
+    
+    if "!GIT_CHOICE!"=="1" (
+        echo.
+        echo Initializing Git repository...
+        cd /d "!PROJECT_DIR!"
+        
+        git --version >nul 2>&1
+        if !ERRORLEVEL! NEQ 0 (
+            echo X Git is not installed. Please install Git first.
+            echo   Download: https://git-scm.com/download/win
+            pause
+            exit /b 1
+        )
+        
+        git init >nul 2>&1
+        git remote add origin https://github.com/Soulter/Astrbot-desktop-assistant.git >nul 2>&1
+        git fetch origin main --depth 1 >nul 2>&1
+        if !ERRORLEVEL! NEQ 0 (
+            git fetch origin master --depth 1 >nul 2>&1
+        )
+        
+        echo + Git repository initialized
+        set "HAS_GIT=1"
+    ) else (
+        echo.
+        echo ! Skipping update. Please download the latest version manually:
+        echo   https://github.com/Soulter/Astrbot-desktop-assistant/releases
+        echo.
+        goto :skip_to_deps
+    )
+)
+
 cd /d "!PROJECT_DIR!"
 
 :: ============================================================================
-:: 显示当前版本
+:: Get current version
 :: ============================================================================
 echo.
-echo %CYAN%[2/5]%RESET% 获取版本信息...
+echo Step 2 of 5 - Getting version info...
 
-:: 保存当前版本
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h"`) do set "OLD_COMMIT=%%i"
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%ci"`) do set "OLD_DATE=%%i"
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%s"`) do set "OLD_MSG=%%i"
+:: Save current version
+set "OLD_COMMIT=unknown"
+set "OLD_DATE=unknown"
+set "OLD_MSG=unknown"
+
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h" 2^>nul`) do set "OLD_COMMIT=%%i"
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%ci" 2^>nul`) do set "OLD_DATE=%%i"
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%s" 2^>nul`) do set "OLD_MSG=%%i"
 
 echo.
-echo %WHITE%当前版本：%RESET%
-echo   提交: %OLD_COMMIT%
-echo   日期: %OLD_DATE%
-echo   说明: %OLD_MSG%
+echo Current Version:
+echo   Commit: %OLD_COMMIT%
+echo   Date: %OLD_DATE%
+echo   Message: %OLD_MSG%
 
 :: ============================================================================
-:: 选择网络环境
+:: Select network environment
 :: ============================================================================
 echo.
-echo %WHITE%请选择您的网络环境：%RESET%
+echo Select your network environment:
 echo.
-echo   %CYAN%[1]%RESET% 我有海外网络环境（可直接访问 GitHub）
-echo   %CYAN%[2]%RESET% 我没有海外网络（使用国内加速，推荐大多数用户）
+echo   1 - Direct access to GitHub - overseas network
+echo   2 - Use proxy - recommended for China users
 echo.
-set /p "NETWORK_CHOICE=请输入选择 [1/2]: "
+set /p "NETWORK_CHOICE=Select 1 or 2: "
 
 set "BEST_PROXY="
 
 if "!NETWORK_CHOICE!"=="1" (
     echo.
-    echo %GREEN%✓ 将使用 GitHub 直连%RESET%
+    echo + Using direct GitHub connection
 ) else (
     echo.
-    echo %CYAN%正在自动测试加速代理，请稍候...%RESET%
+    echo Testing proxy servers, please wait...
     echo.
     
     set "MIN_TIME=9999"
     
     for %%H in (%PROXY_HOSTS%) do (
-        echo   测试 %%H ...
+        echo   Testing %%H ...
         
         ping -n 1 -w 3000 %%H >nul 2>&1
         if !ERRORLEVEL! EQU 0 (
             if not defined BEST_PROXY (
                 set "BEST_PROXY=%%H"
             )
-            echo     %GREEN%✓ 可用%RESET%
+            echo     + Available
         ) else (
-            echo     %RED%✗ 不可用%RESET%
+            echo     X Unavailable
         )
     )
     
     if defined BEST_PROXY (
         echo.
-        echo %GREEN%✓ 已选择代理: !BEST_PROXY!%RESET%
+        echo + Selected proxy: !BEST_PROXY!
         
-        :: 配置 Git 代理
+        :: Configure Git proxy
         git config --local url."https://!BEST_PROXY!/https://github.com".insteadOf "https://github.com"
     ) else (
         echo.
-        echo %YELLOW%⚠ 所有代理均不可用，将尝试直连%RESET%
+        echo ! All proxies unavailable, trying direct connection
     )
 )
 
 :: ============================================================================
-:: 更新代码
+:: Update code
 :: ============================================================================
 echo.
-echo %CYAN%[3/5]%RESET% 更新代码...
+echo Step 3 of 5 - Updating code...
 
 if /i "!UPDATE_MODE!"=="release" (
     :: ========================================================================
-    :: Release 模式：切换到指定版本标签
+    :: Release mode: switch to specific version tag
     :: ========================================================================
-    echo 正在获取版本标签...
+    echo Fetching version tags...
     git fetch --tags 2>nul
     if !ERRORLEVEL! NEQ 0 (
-        echo %RED%✗ 获取标签失败%RESET%
+        echo X Failed to fetch tags
         goto :update_failed
     )
     
-    :: 检查目标版本是否存在
+    :: Check if target version exists
     git tag -l "!TARGET_VERSION!" | findstr /r "." >nul 2>&1
     if !ERRORLEVEL! NEQ 0 (
-        echo %RED%✗ 版本 !TARGET_VERSION! 不存在%RESET%
+        echo X Version !TARGET_VERSION! not found
         echo.
-        echo %WHITE%可用版本列表：%RESET%
-        git tag -l --sort=-v:refname | head -10 2>nul
+        echo Available versions:
         for /f "tokens=*" %%t in ('git tag -l --sort^=-v:refname 2^>nul') do (
             echo   %%t
         )
         goto :update_failed
     )
     
-    :: 切换到指定版本
-    echo 正在切换到版本 !TARGET_VERSION!...
+    :: Switch to specified version
+    echo Switching to version !TARGET_VERSION!...
     git checkout "!TARGET_VERSION!" 2>nul
     if !ERRORLEVEL! NEQ 0 (
-        echo %YELLOW%⚠ 切换失败，尝试强制切换...%RESET%
+        echo ! Switch failed, trying force checkout...
         git checkout -f "!TARGET_VERSION!" 2>nul
         if !ERRORLEVEL! NEQ 0 (
-            echo %RED%✗ 切换版本失败%RESET%
+            echo X Failed to switch version
             goto :update_failed
         )
     )
     
-    echo %GREEN%✓ 已切换到版本 !TARGET_VERSION!%RESET%
+    echo + Switched to version !TARGET_VERSION!
     
 ) else (
     :: ========================================================================
-    :: Git 模式：拉取最新代码
+    :: Git mode: pull latest code
     :: ========================================================================
-    :: 先 fetch
+    :: First fetch
     git fetch origin main --depth 1 2>nul
     if !ERRORLEVEL! NEQ 0 (
         git fetch origin master --depth 1 2>nul
     )
 
-    :: 检查是否有更新
+    :: Check for updates
     git status -uno | findstr /i "behind" >nul 2>&1
     if !ERRORLEVEL! NEQ 0 (
-        :: 可能已经是最新，或者 fetch 失败，尝试 pull
-        echo 正在拉取最新代码...
+        echo Pulling latest code...
     )
 
-    :: 执行 pull
+    :: Execute pull
     git pull --rebase 2>nul
     if !ERRORLEVEL! NEQ 0 (
-        :: 尝试不带 rebase
+        :: Try without rebase
         git pull 2>nul
         if !ERRORLEVEL! NEQ 0 (
-            echo %YELLOW%⚠ 常规更新失败，尝试强制更新...%RESET%
+            echo ! Normal update failed, trying force update...
             git fetch origin main --depth 1 2>nul
             git reset --hard origin/main 2>nul
             if !ERRORLEVEL! NEQ 0 (
@@ -266,57 +337,64 @@ if /i "!UPDATE_MODE!"=="release" (
     )
 )
 
-:: 清理代理配置
+:: Clean up proxy configuration
 if defined BEST_PROXY (
     git config --local --unset url."https://!BEST_PROXY!/https://github.com".insteadOf 2>nul
 )
 
-:: 获取新版本
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h"`) do set "NEW_COMMIT=%%i"
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%ci"`) do set "NEW_DATE=%%i"
-for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%s"`) do set "NEW_MSG=%%i"
+:: Get new version
+set "NEW_COMMIT=unknown"
+set "NEW_DATE=unknown"
+set "NEW_MSG=unknown"
 
-:: 获取当前标签（如果有）
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%h" 2^>nul`) do set "NEW_COMMIT=%%i"
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%ci" 2^>nul`) do set "NEW_DATE=%%i"
+for /f "usebackq tokens=*" %%i in (`git log -1 --format^="%%s" 2^>nul`) do set "NEW_MSG=%%i"
+
+:: Get current tag (if any)
 set "NEW_TAG="
 for /f "usebackq tokens=*" %%i in (`git describe --tags --exact-match 2^>nul`) do set "NEW_TAG=%%i"
 
 echo.
-echo %WHITE%更新后版本：%RESET%
-echo   提交: %NEW_COMMIT%
-if defined NEW_TAG echo   标签: %NEW_TAG%
-echo   日期: %NEW_DATE%
-echo   说明: %NEW_MSG%
+echo Updated Version:
+echo   Commit: %NEW_COMMIT%
+if defined NEW_TAG echo   Tag: %NEW_TAG%
+echo   Date: %NEW_DATE%
+echo   Message: %NEW_MSG%
 
-:: 比较版本
+:: Compare versions
 if "%OLD_COMMIT%"=="%NEW_COMMIT%" (
     echo.
-    echo %GREEN%✓ 已是最新版本，无需更新%RESET%
+    echo + Already up to date, no update needed
 ) else (
     echo.
-    echo %GREEN%✓ 代码已更新 (%OLD_COMMIT% → %NEW_COMMIT%)%RESET%
+    echo + Code updated: %OLD_COMMIT% to %NEW_COMMIT%
 )
 
 goto :update_deps
 
 :update_failed
 echo.
-echo %RED%更新失败，请检查网络连接或版本号是否正确%RESET%
-:: 清理代理配置
+echo X Update failed. Please check network connection or version number
+:: Clean up proxy configuration
 if defined BEST_PROXY (
     git config --local --unset url."https://!BEST_PROXY!/https://github.com".insteadOf 2>nul
 )
 pause
 exit /b 1
 
+:skip_to_deps
+cd /d "!PROJECT_DIR!"
+
 :update_deps
 
 :: ============================================================================
-:: 更新依赖
+:: Update dependencies
 :: ============================================================================
 echo.
-echo %CYAN%[4/5]%RESET% 更新依赖包...
+echo Step 4 of 5 - Updating dependencies...
 
-:: 检测 Python
+:: Detect Python
 set "PYTHON_CMD="
 
 if exist "!PROJECT_DIR!\venv\Scripts\python.exe" (
@@ -334,60 +412,56 @@ if exist "!PROJECT_DIR!\venv\Scripts\python.exe" (
 )
 
 if not defined PYTHON_CMD (
-    echo %YELLOW%⚠ 未检测到 Python，跳过依赖更新%RESET%
+    echo ! Python not detected, skipping dependency update
     goto :skip_deps
 )
 
-:: 升级 pip
+:: Upgrade pip
 "!PYTHON_CMD!" -m pip install --upgrade pip -q 2>nul
 
-:: 安装/更新依赖
+:: Install/update dependencies
 "!PYTHON_CMD!" -m pip install -r "!PROJECT_DIR!\requirements.txt" -q 2>nul
 if !ERRORLEVEL! EQU 0 (
-    echo %GREEN%✓ 依赖更新完成%RESET%
+    echo + Dependencies updated successfully
 ) else (
-    echo %YELLOW%⚠ 部分依赖更新可能失败%RESET%
+    echo ! Some dependencies may have failed to update
 )
 
 :skip_deps
 
 :: ============================================================================
-:: 完成
+:: Complete
 :: ============================================================================
 echo.
-echo %CYAN%[5/5]%RESET% 更新完成！
+echo Step 5 of 5 - Update complete!
 echo.
-echo %GREEN%╔══════════════════════════════════════════════════════════════════════╗%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%║                    ✓ 更新成功！                                      ║%RESET%
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%╠══════════════════════════════════════════════════════════════════════╣%RESET%
-echo %GREEN%║                                                                      ║%RESET%
+echo ======================================================================
+echo                     + Update Successful!
+echo ======================================================================
+echo.
 if /i "!UPDATE_MODE!"=="release" (
-echo %GREEN%║  模式: Release（稳定版）                                             ║%RESET%
-echo %GREEN%║  目标版本: !TARGET_VERSION!                                                    ║%RESET%
+echo   Mode: Release - Stable
+echo   Target: !TARGET_VERSION!
 ) else (
-echo %GREEN%║  模式: Git（最新版）                                                 ║%RESET%
+echo   Mode: Git - Latest
 )
 if "%OLD_COMMIT%"=="%NEW_COMMIT%" (
-echo %GREEN%║  状态: 已是最新版本                                                  ║%RESET%
+echo   Status: Already up to date
 ) else (
-echo %GREEN%║  版本变化: %OLD_COMMIT% → %NEW_COMMIT%                                           ║%RESET%
+echo   Changed: %OLD_COMMIT% to %NEW_COMMIT%
 )
-echo %GREEN%║                                                                      ║%RESET%
-echo %GREEN%╚══════════════════════════════════════════════════════════════════════╝%RESET%
 echo.
 
-:: 询问是否立即启动
-echo 是否立即启动 AstrBot Desktop Assistant？
-echo   %CYAN%[1]%RESET% 是
-echo   %CYAN%[2]%RESET% 否
+:: Ask whether to start immediately
+echo Start AstrBot Desktop Assistant now?
+echo   1 - Yes
+echo   2 - No
 echo.
-set /p "START_CHOICE=请选择 [1/2]: "
+set /p "START_CHOICE=Select 1 or 2: "
 
 if "!START_CHOICE!"=="1" (
     echo.
-    echo 正在启动...
+    echo Starting...
     if defined PYTHON_CMD (
         start "" "!PYTHON_CMD!" -m desktop_client
     ) else (
@@ -395,10 +469,10 @@ if "!START_CHOICE!"=="1" (
             start "" "!PROJECT_DIR!\start.bat"
         )
     )
-    echo %GREEN%✓ 应用已启动%RESET%
+    echo + Application started
 )
 
 echo.
-echo %CYAN%感谢使用 AstrBot Desktop Assistant！%RESET%
+echo Thank you for using AstrBot Desktop Assistant!
 echo.
 pause
