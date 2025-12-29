@@ -316,25 +316,34 @@ class UpdateService(QObject):
             return has_update, current, latest
 
         # 获取远程最新 commit
-        result = await self._run_git_command(
-            ["git", "rev-parse", "--short", "origin/main"]
-        )
-        if not result[0]:
-            # 尝试 master 分支
+        # 尝试多个可能的分支名
+        branches_to_try = ["origin/main", "origin/master", "origin/dev"]
+        result = (False, "")
+
+        for branch in branches_to_try:
             result = await self._run_git_command(
-                ["git", "rev-parse", "--short", "origin/master"]
+                ["git", "rev-parse", "--short", branch]
             )
+            if result[0]:
+                logger.debug(f"成功获取远程分支 {branch} 的版本")
+                break
+            else:
+                logger.debug(f"尝试分支 {branch} 失败: {result[1]}")
 
         if not result[0]:
             self._is_checking = False
-            self.check_finished.emit(False, "无法获取远程版本")
-            return False, current, "无法获取远程版本"
+            error_msg = "无法获取远程版本（尝试了 main/master/dev 分支）"
+            logger.error(error_msg)
+            self.check_finished.emit(False, error_msg)
+            return False, current, error_msg
 
         latest = result[1].strip()
         self._latest_version = latest
         self._update_last_check_time()
 
-        has_update = current != latest
+        # 智能判断是否需要更新
+        # 不仅比较 hash，还要检查本地是否已包含远程的最新提交
+        has_update = await self._check_if_behind_remote(current, latest)
 
         if has_update:
             self.update_available.emit(current, latest)
@@ -343,6 +352,53 @@ class UpdateService(QObject):
         self._is_checking = False
 
         return has_update, current, latest
+
+    async def _check_if_behind_remote(self, current: str, latest: str) -> bool:
+        """
+        检查本地是否落后于远程
+
+        智能判断：
+        - 如果 hash 相同，不需要更新
+        - 如果本地已包含远程最新提交（本地领先），不需要更新
+        - 如果远程有本地没有的提交，需要更新
+
+        Args:
+            current: 当前本地版本 hash
+            latest: 远程最新版本 hash
+
+        Returns:
+            True 如果需要更新（本地落后于远程）
+        """
+        # 如果 hash 相同，不需要更新
+        if current == latest:
+            logger.debug("本地版本与远程相同，无需更新")
+            return False
+
+        # 检查远程最新提交是否是本地的祖先（即本地是否已包含远程的提交）
+        # git merge-base --is-ancestor <remote> <local> 返回 0 表示 remote 是 local 的祖先
+        result = await self._run_git_command(
+            ["git", "merge-base", "--is-ancestor", latest, "HEAD"]
+        )
+
+        if result[0]:
+            # 远程是本地的祖先，说明本地领先或相同，不需要更新
+            logger.info(f"本地版本 ({current}) 已包含远程最新提交 ({latest})，无需更新")
+            return False
+
+        # 检查本地是否是远程的祖先（即本地落后于远程）
+        result = await self._run_git_command(
+            ["git", "merge-base", "--is-ancestor", "HEAD", latest]
+        )
+
+        if result[0]:
+            # 本地是远程的祖先，说明本地落后，需要更新
+            logger.info(f"本地版本 ({current}) 落后于远程 ({latest})，需要更新")
+            return True
+
+        # 两者都不是对方的祖先，说明分叉了
+        # 这种情况下，提示用户有更新，让用户决定是否合并
+        logger.warning(f"本地 ({current}) 与远程 ({latest}) 已分叉，建议检查更新")
+        return True
 
     async def _get_latest_release(self) -> Optional[Dict[str, Any]]:
         """

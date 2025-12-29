@@ -1292,10 +1292,15 @@ class SettingsWindow(QWidget):
         if hasattr(self, "_update_check_callback") and self._update_check_callback:
             self._update_check_callback()
         else:
-            # 没有回调时，显示提示
+            # 没有回调时，显示错误提示
             from PySide6.QtCore import QTimer
 
-            QTimer.singleShot(1000, self._on_check_update_done)
+            QTimer.singleShot(
+                1000,
+                lambda: self._on_check_update_done(
+                    has_update=False, message="更新服务未初始化，请重启应用"
+                ),
+            )
 
     def _on_check_update_done(self, has_update: bool = False, message: str = ""):
         """检查更新完成回调"""

@@ -525,6 +525,22 @@ class DesktopClientApp(QObject):
             check_callback=self._on_check_update,
             perform_callback=self._on_perform_update,
         )
+
+        # 连接更新服务信号
+        self._update_service.update_available.connect(self._on_update_available)
+        self._update_service.check_finished.connect(self._on_update_check_finished)
+
+        # 启动时检查更新（如果配置启用）
+        if self.config.update.check_on_startup:
+            logger.debug("启动时检查更新已启用，将在启动后检查更新")
+            # 延迟检查，等待应用完全启动
+            QTimer.singleShot(5000, self._startup_update_check)
+
+        # 启动定时更新检查（如果配置启用）
+        if self.config.update.enabled and self.config.update.scheduled_times:
+            logger.debug(f"启动定时更新检查，时间点: {self.config.update.scheduled_times}")
+            self._update_service.start_scheduled_checks()
+
         logger.debug("更新服务创建完成")
 
         # 创建主动对话服务
@@ -651,8 +667,30 @@ class DesktopClientApp(QObject):
         if self._update_service:
             asyncio.ensure_future(self._do_check_update())
 
-    async def _do_check_update(self):
-        """异步执行更新检查"""
+    def _startup_update_check(self):
+        """启动时的更新检查"""
+        logger.debug("执行启动时更新检查...")
+        if self._update_service:
+            asyncio.ensure_future(self._do_check_update(silent=True))
+
+    def _on_update_available(self, current_version: str, latest_version: str):
+        """发现新版本时的回调"""
+        logger.info(f"发现新版本: {current_version} -> {latest_version}")
+        if self._floating_ball:
+            self._floating_ball.show_system_message(
+                f"发现新版本 {latest_version}，可在设置中更新"
+            )
+
+    def _on_update_check_finished(self, has_update: bool, message: str):
+        """更新检查完成回调"""
+        logger.debug(f"更新检查完成: has_update={has_update}, message={message}")
+
+    async def _do_check_update(self, silent: bool = False):
+        """异步执行更新检查
+
+        Args:
+            silent: 是否静默模式（不显示"已是最新版本"提示）
+        """
         if not self._update_service:
             return
 
@@ -673,14 +711,20 @@ class DesktopClientApp(QObject):
                     self._settings_window._on_check_update_done(
                         has_update=True, message=f"发现新版本: {latest}"
                     )
-                else:
+                elif not silent:
+                    # 非静默模式才显示"已是最新版本"
                     self._settings_window._on_check_update_done(
                         has_update=False, message="已是最新版本"
                     )
 
+            # 保存更新检查时间到配置
+            from datetime import datetime
+            self.config.update.last_check_time = datetime.now().isoformat()
+            save_config(self.config)
+
         except Exception as e:
             logger.error(f"检查更新失败: {e}")
-            if self._settings_window:
+            if self._settings_window and not silent:
                 self._settings_window._on_check_update_done(
                     has_update=False, message=f"检查失败: {e}"
                 )

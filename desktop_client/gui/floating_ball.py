@@ -1380,7 +1380,7 @@ class CompactChatWindow(QWidget):
 
     def update_streaming_response(self, content: str):
         """更新流式响应"""
-        self._current_ai_message = content
+        self._current_ai_message += content
 
         # 如果还没有创建AI消息，先创建一个
         if not self._current_ai_message_id:
@@ -1398,10 +1398,10 @@ class CompactChatWindow(QWidget):
                     self._message_labels[msg.id] = label
         else:
             # 更新历史记录中的消息
-            self._chat_history.update_message(self._current_ai_message_id, content)
+            self._chat_history.update_message(self._current_ai_message_id, self._current_ai_message)
             # 直接更新当前label
             if self._current_ai_label:
-                self._current_ai_label.set_markdown(content)
+                self._current_ai_label.set_markdown(self._current_ai_message)
 
         self._scroll_to_bottom()
 

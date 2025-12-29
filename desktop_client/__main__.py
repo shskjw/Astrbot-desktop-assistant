@@ -8,14 +8,43 @@ import os
 import logging
 
 # ============================================================
-# 配置日志系统（必须在最开始）
+# 添加路径（必须在最开始）
 # ============================================================
-# 添加父目录到路径以便导入模块
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+# ============================================================
+# 依赖检查与自动安装（在导入其他模块之前）
+# ============================================================
+# 注意：dependency_checker 只使用标准库，不依赖第三方包
+try:
+    from desktop_client.dependency_checker import check_and_install_dependencies
+
+    success, message = check_and_install_dependencies(
+        auto_install=True,
+        show_gui=True,
+    )
+
+    if not success:
+        print(f"\n错误: {message}")
+        print("请手动安装依赖: pip install -r requirements.txt")
+        input("按回车键退出...")
+        sys.exit(1)
+    elif "安装" in message and "成功" in message:
+        print(f"\n{message}")
+        print("依赖已安装，正在启动应用...\n")
+except ImportError as e:
+    # dependency_checker 模块本身导入失败，继续尝试启动
+    print(f"警告: 依赖检查模块加载失败: {e}")
+except Exception as e:
+    # 其他错误，记录但不阻止启动
+    print(f"警告: 依赖检查过程出错: {e}")
+
+# ============================================================
+# 配置日志系统
+# ============================================================
 # 导入并配置日志
 from desktop_client.logger import configure_root_logger  # noqa: E402
 from desktop_client.config import ClientConfig  # noqa: E402

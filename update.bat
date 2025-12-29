@@ -172,7 +172,7 @@ if "!HAS_GIT!"=="0" (
         )
         
         git init >nul 2>&1
-        git remote add origin https://github.com/Soulter/Astrbot-desktop-assistant.git >nul 2>&1
+        git remote add origin https://github.com/muyouzhi6/Astrbot-desktop-assistant.git >nul 2>&1
         git fetch origin main --depth 1 >nul 2>&1
         if !ERRORLEVEL! NEQ 0 (
             git fetch origin master --depth 1 >nul 2>&1
@@ -183,7 +183,7 @@ if "!HAS_GIT!"=="0" (
     ) else (
         echo.
         echo ! Skipping update. Please download the latest version manually:
-        echo   https://github.com/Soulter/Astrbot-desktop-assistant/releases
+        echo   https://github.com/muyouzhi6/Astrbot-desktop-assistant/releases
         echo.
         goto :skip_to_deps
     )

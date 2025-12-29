@@ -245,9 +245,11 @@ class WindowsPlatformAdapter(IPlatformAdapter):
         # VBS script content
         # Add --autostart parameter to let the app know this is autostart, allowing longer startup delay
         # Add detailed error handling and logging
+        # 增强版：添加多种路径检测方式，确保能找到正确的项目目录
         vbs_content = f'''
 ' AstrBot Desktop Assistant Autostart Script
 ' Auto-generated, do not modify manually
+' Version: 2.0 - Enhanced path detection
 
 On Error Resume Next
 
@@ -266,7 +268,7 @@ Sub WriteLog(message)
     logFile.Close
 End Sub
 
-WriteLog "========== Autostart script started =========="
+WriteLog "========== Autostart script started (v2.0) =========="
 
 ' Set working directory
 projectRoot = "{project_root_str}"
@@ -275,70 +277,151 @@ pythonPath = "{python_path_str}"
 WriteLog "Configured project root: " & projectRoot
 WriteLog "Configured Python path: " & pythonPath
 
-' Check if Python exists
-If Not fso.FileExists(pythonPath) Then
-    WriteLog "Error: Python interpreter not found: " & pythonPath
-    ' Try to find pythonw.exe
-    pythonDir = fso.GetParentFolderName(pythonPath)
-    altPython = pythonDir & "\\pythonw.exe"
-    If fso.FileExists(altPython) Then
-        pythonPath = altPython
-        WriteLog "Using alternative Python: " & pythonPath
-    Else
-        altPython = pythonDir & "\\python.exe"
-        If fso.FileExists(altPython) Then
-            pythonPath = altPython
-            WriteLog "Using alternative Python: " & pythonPath
-        Else
-            WriteLog "Error: Cannot find any Python interpreter"
-            WScript.Quit 1
+' Function to find Python executable
+Function FindPython(basePath)
+    FindPython = ""
+
+    ' Try pythonw.exe first (no console window)
+    testPath = basePath & "\\pythonw.exe"
+    If fso.FileExists(testPath) Then
+        FindPython = testPath
+        Exit Function
+    End If
+
+    ' Try python.exe
+    testPath = basePath & "\\python.exe"
+    If fso.FileExists(testPath) Then
+        FindPython = testPath
+        Exit Function
+    End If
+
+    ' Try Scripts folder (venv)
+    testPath = basePath & "\\Scripts\\pythonw.exe"
+    If fso.FileExists(testPath) Then
+        FindPython = testPath
+        Exit Function
+    End If
+
+    testPath = basePath & "\\Scripts\\python.exe"
+    If fso.FileExists(testPath) Then
+        FindPython = testPath
+        Exit Function
+    End If
+End Function
+
+' Function to find project root
+Function FindProjectRoot()
+    FindProjectRoot = ""
+
+    ' Method 1: Check configured path
+    If fso.FolderExists(projectRoot) Then
+        If fso.FolderExists(projectRoot & "\\desktop_client") Then
+            FindProjectRoot = projectRoot
+            WriteLog "Found project at configured path"
+            Exit Function
         End If
     End If
-End If
 
-' Check if project directory exists
-If Not fso.FolderExists(projectRoot) Then
-    WriteLog "Warning: Project root does not exist: " & projectRoot
-    
-    ' Try to infer from script location
+    ' Method 2: Check relative to config directory
+    parentDir = fso.GetParentFolderName(configDir)
+    If fso.FolderExists(parentDir & "\\desktop_client") Then
+        FindProjectRoot = parentDir
+        WriteLog "Found project relative to config dir: " & parentDir
+        Exit Function
+    End If
+
+    ' Method 3: Check relative to script location
     scriptPath = WScript.ScriptFullName
     scriptDir = fso.GetParentFolderName(scriptPath)
-    WriteLog "Script directory: " & scriptDir
-    
-    ' Parent of config directory might be project root
     parentDir = fso.GetParentFolderName(scriptDir)
     If fso.FolderExists(parentDir & "\\desktop_client") Then
-        projectRoot = parentDir
-        WriteLog "Using inferred project root: " & projectRoot
-    Else
-        ' Try to infer from Python path (venv scenario)
+        FindProjectRoot = parentDir
+        WriteLog "Found project relative to script: " & parentDir
+        Exit Function
+    End If
+
+    ' Method 4: Check common installation paths
+    Dim commonPaths(3)
+    commonPaths(0) = WshShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\\Astrbot-desktop-assistant"
+    commonPaths(1) = WshShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\\Astrbot-desktop-assistant-main"
+    commonPaths(2) = WshShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\\Desktop\\Astrbot-desktop-assistant"
+    commonPaths(3) = WshShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\\Desktop\\Astrbot-desktop-assistant-main"
+
+    For Each testPath In commonPaths
+        If fso.FolderExists(testPath) Then
+            If fso.FolderExists(testPath & "\\desktop_client") Then
+                FindProjectRoot = testPath
+                WriteLog "Found project at common path: " & testPath
+                Exit Function
+            End If
+        End If
+    Next
+
+    ' Method 5: Infer from Python path (venv scenario)
+    If pythonPath <> "" Then
         pythonDir = fso.GetParentFolderName(pythonPath)
-        ' Virtual env is usually in .venv or venv under project dir
+        ' Check if this is a venv
         venvParent = fso.GetParentFolderName(pythonDir)
         If fso.FolderExists(venvParent & "\\desktop_client") Then
-            projectRoot = venvParent
-            WriteLog "Inferred project root from venv: " & projectRoot
+            FindProjectRoot = venvParent
+            WriteLog "Found project from venv path: " & venvParent
+            Exit Function
+        End If
+        ' Check parent of parent (for Scripts folder)
+        venvParent2 = fso.GetParentFolderName(venvParent)
+        If fso.FolderExists(venvParent2 & "\\desktop_client") Then
+            FindProjectRoot = venvParent2
+            WriteLog "Found project from venv Scripts path: " & venvParent2
+            Exit Function
         End If
     End If
+End Function
+
+' Find project root
+projectRoot = FindProjectRoot()
+
+If projectRoot = "" Then
+    WriteLog "ERROR: Cannot find project root directory"
+    WriteLog "Searched locations:"
+    WriteLog "  - Configured: {project_root_str}"
+    WriteLog "  - Config parent: " & fso.GetParentFolderName(configDir)
+    WriteLog "  - Common paths checked"
+    WScript.Quit 1
 End If
 
-' Check project directory again
-If Not fso.FolderExists(projectRoot) Then
-    WriteLog "Error: Cannot determine project root, exiting"
-    WScript.Quit 1
+WriteLog "Using project root: " & projectRoot
+
+' Check if Python exists, try to find it if not
+If Not fso.FileExists(pythonPath) Then
+    WriteLog "Configured Python not found, searching..."
+
+    ' Try to find Python in project venv
+    pythonPath = FindPython(projectRoot & "\\venv")
+    If pythonPath = "" Then
+        pythonPath = FindPython(projectRoot & "\\.venv")
+    End If
+    If pythonPath = "" Then
+        ' Try system Python
+        pythonPath = FindPython(fso.GetParentFolderName(pythonPath))
+    End If
+
+    If pythonPath = "" Or Not fso.FileExists(pythonPath) Then
+        WriteLog "ERROR: Cannot find Python interpreter"
+        WScript.Quit 1
+    End If
+
+    WriteLog "Found Python at: " & pythonPath
 End If
 
 ' Check if desktop_client module exists
 If Not fso.FolderExists(projectRoot & "\\desktop_client") Then
-    WriteLog "Error: desktop_client module not found in: " & projectRoot
+    WriteLog "ERROR: desktop_client module not found in: " & projectRoot
     WScript.Quit 1
 End If
 
-WriteLog "Final project root: " & projectRoot
-
 ' Change to project directory
 WshShell.CurrentDirectory = projectRoot
-WriteLog "Changed working directory"
+WriteLog "Changed working directory to: " & projectRoot
 
 ' Delayed start (wait for network and other services)
 WriteLog "Waiting 8 seconds for system to fully start..."
@@ -371,7 +454,6 @@ WriteLog "========== Autostart script completed =========="
                 f.write(vbs_content.strip())
 
             logger.info(f"[Windows] 创建静默启动器: {vbs_path}")
-            logger.info(f"创建静默启动器: {vbs_path}")
 
             # 同时保存项目根目录信息，便于调试
             info_path = config_dir / "autostart_info.txt"
@@ -380,10 +462,10 @@ WriteLog "========== Autostart script completed =========="
                 f.write(f"Python路径: {python_path}\n")
                 f.write(f"VBS脚本: {vbs_path}\n")
                 f.write(f"创建时间: {__import__('datetime').datetime.now()}\n")
+                f.write(f"VBS版本: 2.0 (增强路径检测)\n")
 
         except Exception as e:
             logger.error(f"[Windows] 创建启动器失败: {e}")
-            logger.info(f"创建启动器失败: {e}")
 
         return str(vbs_path)
 
@@ -499,10 +581,20 @@ WriteLog "========== Autostart script completed =========="
                             vbs_path = Path(match.group(1))
                             if not vbs_path.exists():
                                 logger.warning(
-                                    f"[Windows] VBS 启动器不存在: {vbs_path}"
+                                    f"[Windows] VBS 启动器不存在: {vbs_path}，尝试重新创建"
                                 )
-                                # 注册表项存在但文件不存在，需要重新创建
-                                return True  # 仍然返回 True，让用户知道需要重新启用
+                                # 尝试重新创建 VBS 文件
+                                try:
+                                    self._create_silent_launcher(self._get_project_root())
+                                    if vbs_path.exists():
+                                        logger.info(f"[Windows] VBS 启动器已重新创建: {vbs_path}")
+                                        return True
+                                    else:
+                                        logger.error(f"[Windows] VBS 启动器重新创建失败")
+                                        return False
+                                except Exception as e:
+                                    logger.error(f"[Windows] 重新创建 VBS 启动器失败: {e}")
+                                    return False
                     return True
                 return False
             except FileNotFoundError:
