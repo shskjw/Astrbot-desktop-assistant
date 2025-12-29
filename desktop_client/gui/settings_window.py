@@ -61,32 +61,38 @@ class ColorPickerButton(QPushButton):
     
     def _update_style(self):
         """更新按钮样式以显示当前颜色"""
+        # 获取当前主题颜色
+        from .themes import theme_manager
+        c = theme_manager.get_current_colors()
+
         if self._color:
             # 有颜色时显示颜色
             self.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {self._color};
-                    border: 2px solid #CCCCCC;
+                    border: 2px solid {c.border_base};
                     border-radius: 4px;
+                    min-height: 30px;
                 }}
                 QPushButton:hover {{
-                    border-color: #409EFF;
+                    border-color: {c.primary};
                 }}
             """)
             self.setText("")
         else:
             # 无颜色时显示占位符
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #F5F5F5;
-                    border: 2px dashed #CCCCCC;
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c.bg_secondary};
+                    border: 2px dashed {c.border_base};
                     border-radius: 4px;
-                    color: #999999;
+                    color: {c.text_secondary};
                     font-size: 14px;
-                }
-                QPushButton:hover {
-                    border-color: #409EFF;
-                }
+                    min-height: 30px;
+                }}
+                QPushButton:hover {{
+                    border-color: {c.primary};
+                }}
             """)
             self.setText("...")
     
@@ -841,6 +847,7 @@ class SettingsWindow(QWidget):
             
             # 清除按钮
             clear_btn = QPushButton()
+            clear_btn.setObjectName("clearColorBtn")
             clear_btn.setFixedSize(24, 24)
             clear_btn.setToolTip("清除此颜色")
             clear_btn.clicked.connect(lambda checked, k=key: self._on_clear_color(k))
@@ -1130,8 +1137,9 @@ class SettingsWindow(QWidget):
                 font-size: {t.font_size_large}px;
                 font-weight: bold;
                 background: transparent;
+                line-height: 50px;
             }}
-            
+
             QTabWidget#settingsTabs {{
                 background-color: {c.bg_primary};
             }}
@@ -1142,9 +1150,10 @@ class SettingsWindow(QWidget):
             QTabBar::tab {{
                 background-color: {c.bg_secondary};
                 color: {c.text_secondary};
-                padding: 10px 20px;
+                padding: 12px 20px;
                 border: none;
                 border-bottom: 2px solid transparent;
+                min-height: 40px;
             }}
             QTabBar::tab:selected {{
                 color: {c.primary};
@@ -1170,16 +1179,25 @@ class SettingsWindow(QWidget):
             QLabel#settingLabel {{
                 color: {c.text_secondary};
                 background: transparent;
+                min-height: 32px;
+                line-height: 32px;
             }}
-            
-            QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit {{
+
+            QLabel#infoLabel {{
+                color: {c.text_secondary};
+                background: transparent;
+                line-height: 1.6;
+            }}
+
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QKeySequenceEdit, QTimeEdit {{
                 background-color: {c.bg_primary};
                 border: 1px solid {c.border_light};
                 border-radius: {t.border_radius}px;
                 padding: 8px 12px;
                 color: {c.text_primary};
+                min-height: 36px;
             }}
-            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QKeySequenceEdit:focus {{
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QKeySequenceEdit:focus, QTimeEdit:focus {{
                 border-color: {c.primary};
             }}
             
@@ -1194,7 +1212,39 @@ class SettingsWindow(QWidget):
                 border-top: 5px solid {c.text_secondary};
                 margin-right: 10px;
             }}
-            
+
+            /* 下拉框列表样式 */
+            QComboBox QAbstractItemView {{
+                background-color: {c.bg_primary};
+                border: 1px solid {c.border_light};
+                border-radius: {t.border_radius}px;
+                selection-background-color: {c.bg_hover};
+                selection-color: {c.text_primary};
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 36px;
+                padding: 8px 12px;
+                color: {c.text_primary};
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {c.bg_hover};
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: {c.primary_light};
+                color: white;
+            }}
+
+            /* 隐藏数值输入框的增减按钮 */
+            QSpinBox::up-button, QDoubleSpinBox::up-button {{
+                width: 0px;
+                border: none;
+            }}
+            QSpinBox::down-button, QDoubleSpinBox::down-button {{
+                width: 0px;
+                border: none;
+            }}
+
             QCheckBox {{
                 color: {c.text_primary};
                 spacing: 8px;
@@ -1222,9 +1272,26 @@ class SettingsWindow(QWidget):
                 border-radius: {t.border_radius}px;
                 padding: 8px 16px;
                 color: {c.text_primary};
+                min-height: 36px;
             }}
             QPushButton:hover {{
                 background-color: {c.bg_hover};
+            }}
+
+            /* 清除颜色按钮样式 */
+            QPushButton#clearColorBtn {{
+                background-color: transparent;
+                border: 1px solid {c.border_light};
+                border-radius: 4px;
+                padding: 0px;
+                min-height: 24px;
+            }}
+            QPushButton#clearColorBtn:hover {{
+                background-color: {c.bg_hover};
+                border-color: {c.danger};
+            }}
+            QPushButton#clearColorBtn:pressed {{
+                background-color: {c.danger};
             }}
             
             QPushButton#saveBtn {{
@@ -1259,6 +1326,59 @@ class SettingsWindow(QWidget):
             QFrame#bottomBar {{
                 background-color: {c.bg_secondary};
                 border-top: 1px solid {c.border_light};
+            }}
+
+            /* 滚动条样式 */
+            QScrollBar:vertical {{
+                background-color: {c.bg_secondary};
+                width: 12px;
+                border-radius: 6px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {c.border_base};
+                border-radius: 6px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {c.text_secondary};
+            }}
+            QScrollBar::handle:vertical:pressed {{
+                background-color: {c.primary};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+
+            QScrollBar:horizontal {{
+                background-color: {c.bg_secondary};
+                height: 12px;
+                border-radius: 6px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {c.border_base};
+                border-radius: 6px;
+                min-width: 30px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {c.text_secondary};
+            }}
+            QScrollBar::handle:horizontal:pressed {{
+                background-color: {c.primary};
+            }}
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {{
+                background: none;
             }}
         """)
         
