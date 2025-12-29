@@ -520,57 +520,68 @@ class SettingsWindow(QWidget):
     def _create_interaction_tab(self) -> QWidget:
         """创建交互设置标签页"""
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        # 滚动内容容器
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(16, 16, 16, 16)
-        
+
         # 交互模式
         mode_section = SettingsSection("交互模式")
-        
+
         self._default_mode = QComboBox()
         self._default_mode.addItem("气泡对话", "bubble")
         self._default_mode.addItem("对话窗口", "window")
         mode_section.add_row("默认模式", self._default_mode)
-        
+
         self._single_click_action = QComboBox()
         self._single_click_action.addItem("显示气泡", "bubble")
         self._single_click_action.addItem("打开窗口", "window")
         self._single_click_action.addItem("无操作", "none")
         mode_section.add_row("单击悬浮球", self._single_click_action)
-        
+
         self._double_click_action = QComboBox()
         self._double_click_action.addItem("打开窗口", "window")
         self._double_click_action.addItem("显示气泡", "bubble")
         self._double_click_action.addItem("无操作", "none")
         mode_section.add_row("双击悬浮球", self._double_click_action)
-        
+
         layout.addWidget(mode_section)
-        
+
         # 气泡设置
         bubble_section = SettingsSection("气泡设置")
-        
+
         self._bubble_duration = QSpinBox()
         self._bubble_duration.setRange(1, 30)
         self._bubble_duration.setValue(5)
         self._bubble_duration.setSuffix(" 秒")
         bubble_section.add_row("自动隐藏时间", self._bubble_duration)
-        
+
         self._bubble_auto_hide = QCheckBox("自动隐藏气泡")
         self._bubble_auto_hide.setChecked(True)
         bubble_section.add_widget(self._bubble_auto_hide)
-        
+
         layout.addWidget(bubble_section)
-        
+
         # 语音设置
         voice_section = SettingsSection("语音设置")
-        
+
         self._auto_play_voice = QCheckBox("收到语音消息时自动播放")
         voice_section.add_widget(self._auto_play_voice)
-        
+
         layout.addWidget(voice_section)
-        
+
         # 免打扰模式
         dnd_section = SettingsSection("免打扰模式")
-        
+
         self._do_not_disturb = QCheckBox("启用免打扰模式")
         self._do_not_disturb.setToolTip(
             "启用后，收到消息时不会弹出对话窗口，只会显示悬浮球动画效果。\n"
@@ -578,7 +589,7 @@ class SettingsWindow(QWidget):
             "适合游戏或全屏工作时使用。"
         )
         dnd_section.add_widget(self._do_not_disturb)
-        
+
         dnd_info = QLabel(
             "提示：启用免打扰模式后，收到消息时悬浮球会显示脉冲动画提示，\n"
             "点击悬浮球可查看消息。语音消息会自动在后台播放。"
@@ -586,10 +597,14 @@ class SettingsWindow(QWidget):
         dnd_info.setWordWrap(True)
         dnd_info.setObjectName("infoLabel")
         dnd_section.add_widget(dnd_info)
-        
+
         layout.addWidget(dnd_section)
         layout.addStretch()
-        
+
+        # 设置滚动内容
+        scroll_area.setWidget(scroll_content)
+        tab_layout.addWidget(scroll_area)
+
         return tab
         
     def _create_storage_tab(self) -> QWidget:
@@ -1179,8 +1194,8 @@ class SettingsWindow(QWidget):
             QLabel#settingLabel {{
                 color: {c.text_secondary};
                 background: transparent;
-                min-height: 32px;
-                line-height: 32px;
+                min-height: 24px;
+                line-height: 24px;
             }}
 
             QLabel#infoLabel {{
@@ -1193,9 +1208,9 @@ class SettingsWindow(QWidget):
                 background-color: {c.bg_primary};
                 border: 1px solid {c.border_light};
                 border-radius: {t.border_radius}px;
-                padding: 8px 12px;
+                padding: 6px 10px;
                 color: {c.text_primary};
-                min-height: 36px;
+                min-height: 28px;
             }}
             QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QKeySequenceEdit:focus, QTimeEdit:focus {{
                 border-color: {c.primary};
@@ -1223,8 +1238,8 @@ class SettingsWindow(QWidget):
                 outline: none;
             }}
             QComboBox QAbstractItemView::item {{
-                min-height: 36px;
-                padding: 8px 12px;
+                min-height: 28px;
+                padding: 6px 10px;
                 color: {c.text_primary};
             }}
             QComboBox QAbstractItemView::item:hover {{
@@ -1270,9 +1285,9 @@ class SettingsWindow(QWidget):
                 background-color: {c.bg_secondary};
                 border: 1px solid {c.border_light};
                 border-radius: {t.border_radius}px;
-                padding: 8px 16px;
+                padding: 6px 14px;
                 color: {c.text_primary};
-                min-height: 36px;
+                min-height: 28px;
             }}
             QPushButton:hover {{
                 background-color: {c.bg_hover};
