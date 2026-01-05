@@ -793,23 +793,61 @@ class DesktopClientApp(QObject):
 def main():
     """入口函数"""
     import argparse
+    import traceback
 
-    parser = argparse.ArgumentParser(description="AstrBot Desktop Client")
-    parser.add_argument("-s", "--server", help="Server URL")
-    parser.add_argument("-u", "--username", help="Username")
-    parser.add_argument("-p", "--password", help="Password")
+    logger.debug("main() 函数开始执行")
 
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(description="AstrBot Desktop Client")
+        parser.add_argument("-s", "--server", help="Server URL")
+        parser.add_argument("-u", "--username", help="Username")
+        parser.add_argument("-p", "--password", help="Password")
+        parser.add_argument("--autostart", action="store_true", help="开机自启模式")
 
-    app = DesktopClientApp(
-        server_url=args.server, username=args.username, password=args.password
-    )
+        args = parser.parse_args()
+        logger.debug(f"命令行参数解析完成: autostart={args.autostart}")
 
-    import signal
+        # 如果是开机自启模式，额外等待一下确保系统完全就绪
+        if args.autostart:
+            import time
+            logger.info("检测到开机自启模式，等待 5 秒确保系统环境就绪...")
+            time.sleep(5)
 
-    signal.signal(signal.SIGINT, lambda *args: app._quit())
+        logger.debug("准备创建 DesktopClientApp 实例...")
+        app = DesktopClientApp(
+            server_url=args.server, username=args.username, password=args.password
+        )
+        logger.debug("DesktopClientApp 实例创建成功")
 
-    app.run()
+        import signal
+
+        signal.signal(signal.SIGINT, lambda *args: app._quit())
+
+        logger.debug("准备调用 app.run()...")
+        app.run()
+        logger.debug("app.run() 执行完毕")
+
+    except Exception as e:
+        logger.error(f"main() 函数发生异常: {e}")
+        logger.error(f"异常详情:\n{traceback.format_exc()}")
+
+        # 写入错误日志文件，便于调试开机自启问题
+        try:
+            from .config import ClientConfig
+            config_dir = ClientConfig.get_config_dir()
+            error_log_path = config_dir / "autostart_crash.log"
+            with open(error_log_path, "a", encoding="utf-8") as f:
+                import datetime
+                f.write(f"\n{'='*50}\n")
+                f.write(f"崩溃时间: {datetime.datetime.now()}\n")
+                f.write(f"异常类型: {type(e).__name__}\n")
+                f.write(f"异常消息: {e}\n")
+                f.write(f"详细堆栈:\n{traceback.format_exc()}\n")
+            logger.info(f"错误日志已写入: {error_log_path}")
+        except Exception as log_error:
+            logger.error(f"写入错误日志失败: {log_error}")
+
+        raise
 
 
 if __name__ == "__main__":
