@@ -160,6 +160,7 @@ class CompactChatWindow(QWidget):
     image_sent = Signal(str, str)  # path, text
     closed = Signal()
     window_moved = Signal(int, int)  # delta_x, delta_y - 窗口移动时发射
+    window_resized = Signal()  # 窗口大小改变时发射
 
     def __init__(self, parent=None, max_history: int = 50, config=None):
         super().__init__(parent)
@@ -655,6 +656,7 @@ class CompactChatWindow(QWidget):
         super().resizeEvent(event)
         if self._background_image is not None:
             self._rebuild_background_pixmap()
+        self.window_resized.emit()
 
     def paintEvent(self, event):
         if self._background_pixmap:
@@ -1881,6 +1883,7 @@ class FloatingBallWindow(QWidget):
         self._compact_window.message_sent.connect(self.message_sent)
         self._compact_window.image_sent.connect(self.image_sent)
         self._compact_window.window_moved.connect(self._on_compact_window_moved)
+        self._compact_window.window_resized.connect(self._on_compact_window_resized)
 
         # 从配置加载用户和Bot头像并传递给精简窗口
         user_avatar_loaded = False
@@ -2283,6 +2286,13 @@ class FloatingBallWindow(QWidget):
         self._scale_animation.setEndValue(1.1)
         self._scale_animation.start()
 
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # 移动窗口跟随
+        # 注意: 只有在非隐藏状态下才跟随，避免隐藏时位置错乱
+        if hasattr(self, "_compact_window") and self._compact_window.isVisible():
+             self._update_compact_window_position()
+
     def leaveEvent(self, event):
         """鼠标离开"""
         self._hovered = False
@@ -2456,6 +2466,9 @@ class FloatingBallWindow(QWidget):
     def _on_region_screenshot(self):
         """区域截图"""
         try:
+            # 记录聊天窗口是否可见，截图后恢复
+            self._chat_window_was_visible = self._compact_window.isVisible()
+            self._compact_window.hide()
             self.hide()
             QTimer.singleShot(100, self._start_region_capture)
         except ImportError as e:
@@ -2471,10 +2484,16 @@ class FloatingBallWindow(QWidget):
         except Exception as e:
             print(f"启动区域截图失败: {e}")
             self.show()
+            # 恢复聊天窗口显示状态
+            if getattr(self, '_chat_window_was_visible', False):
+                self._compact_window.show()
 
     def _on_full_screenshot(self):
         """全屏截图"""
         try:
+            # 记录聊天窗口是否可见，截图后恢复
+            self._chat_window_was_visible = self._compact_window.isVisible()
+            self._compact_window.hide()
             self.hide()
             QTimer.singleShot(100, self._do_full_screenshot)
         except ImportError as e:
@@ -2487,16 +2506,24 @@ class FloatingBallWindow(QWidget):
             screenshot_path = service.capture_full_screen_to_file()
 
             self.show()
+            # 恢复聊天窗口显示状态
+            if getattr(self, '_chat_window_was_visible', False):
+                self._compact_window.show()
 
             if screenshot_path:
                 self.screenshot_requested.emit(screenshot_path)
         except Exception as e:
             print(f"全屏截图失败: {e}")
             self.show()
+            if getattr(self, '_chat_window_was_visible', False):
+                self._compact_window.show()
 
     def _on_screenshot_complete(self, screenshot_path):
         """截图完成回调"""
         self.show()
+        # 恢复聊天窗口显示状态
+        if getattr(self, '_chat_window_was_visible', False):
+            self._compact_window.show()
 
         if screenshot_path:
             self.screenshot_requested.emit(screenshot_path)
@@ -2544,6 +2571,27 @@ class FloatingBallWindow(QWidget):
         new_x = self.x() + delta_x
         new_y = self.y() + delta_y
         self.move(new_x, new_y)
+
+    def _on_compact_window_resized(self):
+        """当精简窗口大小改变时，调整悬浮球位置"""
+        # 判断当前悬浮球在窗口的哪一侧
+        center_x_ball = self.x() + self.width() // 2
+        center_x_win = self._compact_window.x() + self._compact_window.width() // 2
+        
+        spacing = 10
+        
+        if center_x_ball > center_x_win:
+            # 球在右侧
+            # 期望位置：win.x + win.w + spacing
+            expected_x = self._compact_window.x() + self._compact_window.width() + spacing
+            if abs(self.x() - expected_x) > 2: # 允许微小误差
+                 self.move(expected_x, self.y())
+        else:
+            # 球在左侧
+            # 期望位置：win.x - self.width() - spacing
+            expected_x = self._compact_window.x() - self.width() - spacing
+            if abs(self.x() - expected_x) > 2:
+                 self.move(expected_x, self.y())
 
     # === 代理方法供外部调用 ===
 
