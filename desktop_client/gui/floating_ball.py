@@ -159,6 +159,7 @@ class CompactChatWindow(QWidget):
     message_sent = Signal(str)
     image_sent = Signal(str, str)  # path, text
     closed = Signal()
+    window_moved = Signal(int, int)  # delta_x, delta_y - 窗口移动时发射
 
     def __init__(self, parent=None, max_history: int = 50, config=None):
         super().__init__(parent)
@@ -214,6 +215,10 @@ class CompactChatWindow(QWidget):
         self._resize_edge = None  # 'left', 'right', 'top', 'bottom', 'top-left', etc.
         self._resize_margin = 6
         self._last_pos = QPoint()
+        
+        # 拖动窗口相关状态
+        self._dragging = False
+        self._drag_start_pos = QPoint()
 
         # 背景图配置
         self._background_image_path = ""
@@ -264,9 +269,9 @@ class CompactChatWindow(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
 
-        # 设置初始大小和最小大小，允许调整
-        self.setMinimumWidth(300)
-        self.setMinimumHeight(200)
+        # 设置初始大小，不限制最小尺寸
+        # self.setMinimumWidth(300)
+        # self.setMinimumHeight(200)
         default_width = 360
         default_height = 480
         if self._config and hasattr(self._config, "chat_window"):
@@ -1645,11 +1650,17 @@ class CompactChatWindow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._resize_edge = self._check_edge(event.pos())
             if self._resize_edge:
+                # 边缘调整大小
                 self._resizing = True
+                self._dragging = False
                 self._last_pos = event.globalPosition().toPoint()
                 event.accept()
             else:
-                super().mousePressEvent(event)
+                # 非边缘区域，开始拖动窗口
+                self._dragging = True
+                self._resizing = False
+                self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+                event.accept()
         else:
             super().mousePressEvent(event)
 
@@ -1671,13 +1682,21 @@ class CompactChatWindow(QWidget):
                 if "bottom" in self._resize_edge:
                     new_geo.setBottom(geo.bottom() + delta.y())
 
-            # 检查最小尺寸
-            if (
-                new_geo.width() >= self.minimumWidth()
-                and new_geo.height() >= self.minimumHeight()
-            ):
+            # 不限制最小尺寸，只要宽高大于0即可
+            if new_geo.width() > 50 and new_geo.height() > 50:
                 self.setGeometry(new_geo)
+                self._user_resized = True
 
+            event.accept()
+        elif self._dragging:
+            # 拖动整个窗口
+            old_pos = self.pos()
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            self.move(new_pos)
+            # 发射移动信号，传递位移量
+            delta_x = new_pos.x() - old_pos.x()
+            delta_y = new_pos.y() - old_pos.y()
+            self.window_moved.emit(delta_x, delta_y)
             event.accept()
         else:
             edge = self._check_edge(event.pos())
@@ -1697,6 +1716,7 @@ class CompactChatWindow(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._resizing = False
+            self._dragging = False
             self._resize_edge = None
         super().mouseReleaseEvent(event)
 
@@ -1860,6 +1880,7 @@ class FloatingBallWindow(QWidget):
         self._compact_window = CompactChatWindow(config=self.config)
         self._compact_window.message_sent.connect(self.message_sent)
         self._compact_window.image_sent.connect(self.image_sent)
+        self._compact_window.window_moved.connect(self._on_compact_window_moved)
 
         # 从配置加载用户和Bot头像并传递给精简窗口
         user_avatar_loaded = False
@@ -2401,7 +2422,7 @@ class FloatingBallWindow(QWidget):
         for theme_name, display_name in theme_manager.get_theme_names():
             action = theme_menu.addAction(display_name)
             action.triggered.connect(
-                lambda checked, n=theme_name: theme_manager.set_theme(n)
+                lambda checked, n=theme_name: self._switch_theme_and_save(n)
             )
 
         menu.addSeparator()
@@ -2419,6 +2440,18 @@ class FloatingBallWindow(QWidget):
         quit_action.triggered.connect(self.quit_requested.emit)
 
         menu.exec(pos)
+
+    def _switch_theme_and_save(self, theme_name: str):
+        """切换主题并自动保存到配置"""
+        # 切换主题
+        theme_manager.set_theme(theme_name)
+        
+        # 更新配置
+        if hasattr(self.config, "appearance"):
+            self.config.appearance.theme = theme_name
+            # 保存配置到文件
+            if hasattr(self.config, "save"):
+                self.config.save()
 
     def _on_region_screenshot(self):
         """区域截图"""
@@ -2505,6 +2538,12 @@ class FloatingBallWindow(QWidget):
             x = self.x() + self.width() + 10
 
         self._compact_window.move(x, y)
+
+    def _on_compact_window_moved(self, delta_x: int, delta_y: int):
+        """当聊天窗口被拖动时，同步移动悬浮球"""
+        new_x = self.x() + delta_x
+        new_y = self.y() + delta_y
+        self.move(new_x, new_y)
 
     # === 代理方法供外部调用 ===
 
